@@ -21,8 +21,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,7 +48,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.windsaloft.MainViewModel
 import dev.windsaloft.data.MapLayer
 import dev.windsaloft.map.MapHandle
-import dev.windsaloft.map.WindFan
 import dev.windsaloft.map.attribution
 import dev.windsaloft.wind.LatLon
 import org.osmdroid.util.GeoPoint
@@ -128,19 +130,17 @@ fun WindsAloftApp(vm: MainViewModel) {
     }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
+    // When a pin is placed, make sure its arrow column isn't hidden behind the panels.
+    LaunchedEffect(state.pin, profileExpanded) {
+        val pin = state.pin ?: return@LaunchedEffect
+        delay(400) // let the pin panel lay out first
+        map.keepAbovePanels(pin)
+    }
+
     // ---- Derived wind data for the selected time + altitudes ----
     val s = state.settings
-    val altitudes = state.altitudesFt
-    val epoch = state.selectedEpoch
-    val pinWinds = remember(state.pinForecast, epoch, altitudes, s.altitudeRef) {
-        val fp = state.pinForecast ?: return@remember emptyList()
-        altitudes.zip(fp.windsAt(epoch, altitudes, s.altitudeRef))
-    }
-    val fans = remember(state.grid, pinWinds, state.pin, epoch, altitudes, s.altitudeRef) {
-        val grid = state.grid.map { WindFan(it.location, it.windsAt(epoch, altitudes, s.altitudeRef).filterNotNull(), false) }
-        val pin = state.pin?.let { p -> WindFan(p, pinWinds.mapNotNull { it.second }, true) }
-        grid + listOfNotNull(pin)
-    }
+    val profiles = remember(state.pinForecasts, state.selectedEpoch, state.altRangeK, s) { buildProfiles(state) }
+    val fans = remember(state.grid, profiles, state.pin, state.selectedEpoch, state.altRangeK, s) { buildFans(state, profiles) }
 
     Box(Modifier.fillMaxSize()) {
         AndroidView(
@@ -150,6 +150,12 @@ fun WindsAloftApp(vm: MainViewModel) {
                 map.setLayer(s.layer)
                 map.windOverlay.fans = fans
                 map.windOverlay.ceilingFt = s.ceilingFt
+                map.windOverlay.layout = s.arrowLayout
+                map.windOverlay.gridSize = s.gridSize
+                map.windOverlay.insetTopPx = map.obscuredTopPx
+                map.windOverlay.insetBottomPx = map.obscuredBottomPx
+                map.windOverlay.pinInsetBottomPx = if (map.panelsTopPx > 0) it.height - map.panelsTopPx else 0
+                map.windOverlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
                 it.invalidate()
             },
         )
@@ -201,21 +207,27 @@ fun WindsAloftApp(vm: MainViewModel) {
             if (state.pin != null) {
                 PinPanel(
                     state = state,
-                    winds = pinWinds,
+                    profiles = profiles,
                     expanded = profileExpanded,
                     onToggle = { profileExpanded = !profileExpanded },
                     onClose = vm::clearPin,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { map.panelsTopPx = it.boundsInRoot().top.toInt() },
                 )
             } else {
-                Text(
-                    "Tap the map to see the full wind profile for that spot",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .padding(4.dp),
-                )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.9f),
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) {
+                    Text(
+                        "Tap the map to see the full wind profile for that spot",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
             }
             ControlsCard(
                 state = state,
@@ -228,6 +240,7 @@ fun WindsAloftApp(vm: MainViewModel) {
                         val rootHeight = map.mapView.height
                         if (rootHeight > 0) {
                             val newBottom = (rootHeight - coords.boundsInRoot().top).toInt()
+                            if (state.pin == null) map.panelsTopPx = coords.boundsInRoot().top.toInt()
                             if (newBottom != map.obscuredBottomPx) {
                                 map.obscuredBottomPx = newBottom
                                 map.reportViewport()

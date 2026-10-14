@@ -54,6 +54,9 @@ class MapHandle(context: Context, initial: Camera?) {
     var obscuredTopPx = 0
     var obscuredBottomPx = 0
 
+    /** Top edge of everything at the bottom of the screen (pin panel + controls). */
+    var panelsTopPx = 0
+
     var onTap: (LatLon) -> Unit = {}
     var onViewport: (Bbox) -> Unit = {}
 
@@ -105,6 +108,19 @@ class MapHandle(context: Context, initial: Camera?) {
         val nw = proj.fromPixels(0, top)
         val se = proj.fromPixels(w, bottom)
         onViewport(Bbox(nw.latitude, se.latitude, se.longitude, nw.longitude))
+    }
+
+    /** Pans the map, if needed, so [p] sits just above the bottom panels with room for its arrow column above. */
+    fun keepAbovePanels(p: LatLon) {
+        val h = mapView.height
+        if (h == 0 || panelsTopPx <= 0) return
+        val px = mapView.projection.toPixels(GeoPoint(p.lat, p.lon), null)
+        val visibleTop = obscuredTopPx
+        val target = (visibleTop + (panelsTopPx - visibleTop) * 0.85f).toInt()
+        if (px.y in visibleTop..target) return
+        val dy = px.y - target
+        val c = mapView.projection.fromPixels(mapView.width / 2, h / 2 + dy)
+        mapView.controller.animateTo(c)
     }
 
     fun setLayer(layer: MapLayer) {

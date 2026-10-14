@@ -16,7 +16,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import java.util.Locale
 
-data class WeatherModel(val id: String, val label: String)
+data class WeatherModel(val id: String, val label: String, val short: String)
 
 class ApiException(message: String) : Exception(message)
 
@@ -24,13 +24,20 @@ class ApiException(message: String) : Exception(message)
 object OpenMeteo {
     private const val BASE = "https://api.open-meteo.com/v1/forecast"
 
+    /** Models with upper-air (pressure-level) winds. Note ECMWF's 9 km "ecmwf_ifs" has none, so it's not listed. */
     val MODELS = listOf(
-        WeatherModel("best_match", "Best match (auto)"),
-        WeatherModel("gfs_seamless", "NOAA GFS + HRRR"),
-        WeatherModel("ecmwf_ifs025", "ECMWF IFS"),
-        WeatherModel("icon_seamless", "DWD ICON"),
-        WeatherModel("gem_seamless", "Canada GEM"),
+        WeatherModel("best_match", "Best match (auto)", "Best"),
+        WeatherModel("ncep_gfs_seamless", "NOAA GFS + HRRR", "GFS"),
+        WeatherModel("ncep_hrrr_conus", "NOAA HRRR (US only, ~2 days)", "HRRR"),
+        WeatherModel("ecmwf_ifs025", "ECMWF IFS 0.25°", "ECMWF"),
+        WeatherModel("icon_seamless", "DWD ICON", "ICON"),
+        WeatherModel("gem_seamless", "Canada GEM", "GEM"),
+        WeatherModel("ukmo_seamless", "UK Met Office", "UKMO"),
     )
+
+    fun label(id: String): String = MODELS.firstOrNull { it.id == id }?.label ?: id
+
+    fun short(id: String): String = MODELS.firstOrNull { it.id == id }?.short ?: id
 
     /** Pressure levels (hPa) paired with their standard-atmosphere height in feet. */
     private val PRESSURE_LEVELS = listOf(

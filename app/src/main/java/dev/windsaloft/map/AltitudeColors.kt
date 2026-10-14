@@ -19,3 +19,10 @@ object AltitudeColors {
         return (0xFF shl 24) or (c(r) shl 16) or (c(g) shl 8) or c(b)
     }
 }
+
+/** Distinct colours for compared models, by selection order. Bright enough to read on maps with a dark halo. */
+object ModelColors {
+    private val COLORS = intArrayOf(0xFF22C3FF.toInt(), 0xFFFF4FA3.toInt(), 0xFFFFC21A.toInt())
+
+    fun argb(slot: Int): Int = COLORS[slot.mod(COLORS.size)]
+}

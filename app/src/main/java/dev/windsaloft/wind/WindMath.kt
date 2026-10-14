@@ -38,6 +38,20 @@ object WindMath {
     }
 
     /**
+     * Largest magnitude of the vector difference between any two winds (m/s): how far apart the
+     * models are, combining direction and speed. Null with fewer than two winds.
+     */
+    fun maxVectorDifference(winds: List<Wind>): Double? {
+        if (winds.size < 2) return null
+        val uv = winds.map { toUv(it.speedMs, it.dirFromDeg) }
+        var max = 0.0
+        for (i in uv.indices) for (j in i + 1 until uv.size) {
+            max = maxOf(max, hypot(uv[i].first - uv[j].first, uv[i].second - uv[j].second))
+        }
+        return max
+    }
+
+    /**
      * Linearly interpolates the wind vector (and temperature) to [targetM] metres MSL.
      * [samples] must be sorted by height. Returns null below ground or above the highest sample.
      */

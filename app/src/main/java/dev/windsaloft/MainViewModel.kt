@@ -17,6 +17,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -35,7 +36,8 @@ data class UiState(
     val settings: Settings,
     val pin: LatLon? = null,
     val pinLabel: String? = null,
-    val pinForecast: ForecastPoint? = null,
+    /** Pin forecasts keyed by model id. */
+    val pinForecasts: Map<String, ForecastPoint> = emptyMap(),
     val pinFetchedAtMs: Long = 0L,
     val pinLoading: Boolean = false,
     val grid: List<ForecastPoint> = emptyList(),
@@ -49,9 +51,11 @@ data class UiState(
 ) {
     val selectedEpoch: Long get() = nowHourEpoch + hourOffset * 3600L
 
+    val primaryPinForecast: ForecastPoint? get() = pinForecasts[settings.primaryModelId]
+
     val maxHourOffset: Int
         get() {
-            val last = pinForecast?.lastEpochSec ?: grid.firstOrNull()?.lastEpochSec ?: return 72
+            val last = pinForecasts.values.maxOfOrNull { it.lastEpochSec } ?: grid.firstOrNull()?.lastEpochSec ?: return 72
             return ((last - nowHourEpoch) / 3600L).toInt().coerceIn(0, 120)
         }
 
@@ -107,44 +111,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Pin (detailed profile) ----
 
     fun setPin(location: LatLon, label: String? = null) {
-        _state.update { it.copy(pin = location, pinLabel = label, pinForecast = null, searchResults = emptyList()) }
+        _state.update { it.copy(pin = location, pinLabel = label, pinForecasts = emptyMap(), searchResults = emptyList()) }
         prefs.savePin(location, label)
         fetchPin()
     }
 
     fun clearPin() {
         pinJob?.cancel()
-        _state.update { it.copy(pin = null, pinLabel = null, pinForecast = null, pinLoading = false) }
+        _state.update { it.copy(pin = null, pinLabel = null, pinForecasts = emptyMap(), pinLoading = false) }
         prefs.savePin(null, null)
     }
 
-    private fun pinCacheKey(s: UiState) = "${s.pin}|${s.settings.modelId}|${s.settings.ceilingFt}"
+    private fun pinCacheKey(pin: LatLon, ceilingFt: Int) = "$pin|$ceilingFt"
 
     private fun loadPinCache() {
         val s = _state.value
         val pin = s.pin ?: return
-        val (json, time) = prefs.loadPinCache(pinCacheKey(s)) ?: return
-        runCatching { OpenMeteo.parse(json, listOf(pin)).first() }
-            .onSuccess { fp -> _state.update { it.copy(pinForecast = fp, pinFetchedAtMs = time) } }
+        var newest = 0L
+        val loaded = s.settings.modelIds.mapNotNull { model ->
+            val (json, time) = prefs.loadPinCache(model, pinCacheKey(pin, s.settings.ceilingFt)) ?: return@mapNotNull null
+            runCatching { OpenMeteo.parse(json, listOf(pin)).first() }.getOrNull()
+                ?.let { newest = maxOf(newest, time); model to it }
+        }.toMap()
+        if (loaded.isNotEmpty()) _state.update { it.copy(pinForecasts = loaded, pinFetchedAtMs = newest) }
     }
 
+    /** Fetches every selected model for the pin in parallel; one model failing doesn't affect the others. */
     private fun fetchPin() {
         val s = _state.value
         val pin = s.pin ?: return
+        val models = s.settings.modelIds
+        val ceiling = s.settings.ceilingFt
         pinJob?.cancel()
         pinJob = viewModelScope.launch {
-            _state.update { it.copy(pinLoading = true) }
+            _state.update { st -> st.copy(pinLoading = true, pinForecasts = st.pinForecasts.filterKeys { it in models }) }
             try {
-                val url = OpenMeteo.forecastUrl(listOf(pin), s.settings.modelId, s.settings.ceilingFt, includeTemperature = true)
-                val json = Http.get(url)
-                val fp = withContext(Dispatchers.Default) { OpenMeteo.parse(json, listOf(pin)).first() }
-                val now = System.currentTimeMillis()
-                withContext(Dispatchers.IO) { prefs.savePinCache(json, pinCacheKey(s), now) }
-                _state.update { it.copy(pinForecast = fp, pinFetchedAtMs = now, nowHourEpoch = currentHourEpoch()) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _messages.tryEmit("Couldn't load winds: ${e.message}")
+                coroutineScope {
+                    models.forEach { model ->
+                        launch {
+                            try {
+                                val json = Http.get(OpenMeteo.forecastUrl(listOf(pin), model, ceiling, includeTemperature = true))
+                                val fp = withContext(Dispatchers.Default) { OpenMeteo.parse(json, listOf(pin)).first() }
+                                val now = System.currentTimeMillis()
+                                withContext(Dispatchers.IO) { prefs.savePinCache(model, json, pinCacheKey(pin, ceiling), now) }
+                                _state.update {
+                                    it.copy(pinForecasts = it.pinForecasts + (model to fp), pinFetchedAtMs = now, nowHourEpoch = currentHourEpoch())
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                _messages.tryEmit("${OpenMeteo.label(model)}: ${e.message}")
+                            }
+                        }
+                    }
+                }
             } finally {
                 if (isActive) _state.update { it.copy(pinLoading = false) }
             }
@@ -163,7 +183,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(grid = emptyList()) }
             return
         }
-        val key = "${settings.modelId}|${settings.ceilingFt}|${settings.gridSize}"
+        val key = "${settings.primaryModelId}|${settings.ceilingFt}|${settings.gridSize}"
         val last = lastGrid
         val fresh = last != null && System.currentTimeMillis() - last.third < 30 * 60_000L
         if (!force && fresh && last!!.second == key && last.first.similarTo(bbox)) return
@@ -171,7 +191,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val points = bbox.gridPoints(settings.gridSize)
         _state.update { it.copy(gridLoading = true) }
         try {
-            val url = OpenMeteo.forecastUrl(points, settings.modelId, settings.ceilingFt, includeTemperature = false)
+            val url = OpenMeteo.forecastUrl(points, settings.primaryModelId, settings.ceilingFt, includeTemperature = false)
             val json = Http.get(url)
             val grid = withContext(Dispatchers.Default) { OpenMeteo.parse(json, points) }
             lastGrid = Triple(bbox, key, System.currentTimeMillis())
@@ -222,10 +242,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(settings = new, altRangeK = r.first.coerceAtMost(ceilK)..r.last.coerceAtMost(ceilK))
         }
         prefs.saveAltRange(_state.value.altRangeK)
-        if (old.modelId != new.modelId || old.ceilingFt != new.ceilingFt) {
-            fetchPin()
-            refetchGrid()
-        } else if (old.gridSize != new.gridSize) {
+        if (old.modelIds != new.modelIds || old.ceilingFt != new.ceilingFt) fetchPin()
+        if (old.primaryModelId != new.primaryModelId || old.ceilingFt != new.ceilingFt || old.gridSize != new.gridSize) {
             refetchGrid()
         }
     }

@@ -1,6 +1,12 @@
 package dev.windsaloft.ui
 
 import androidx.compose.foundation.Canvas
+import dev.windsaloft.wind.WindMath
+import dev.windsaloft.map.ModelColors
+import dev.windsaloft.data.ArrowLayout
+import androidx.compose.ui.unit.Dp
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +24,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -43,7 +48,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -87,7 +91,12 @@ fun altitudeColor(ft: Int, ceilingFt: Int) = Color(AltitudeColors.argb(ft, ceili
 private val PanelShape = RoundedCornerShape(20.dp)
 
 @Composable
-private fun panelColors() = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+private fun panelColors() = CardDefaults.cardColors(
+    // contentColor must be explicit: a translucent container isn't a theme colour, so Material can't
+    // pick a matching text colour and would fall back to black (invisible in dark mode).
+    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+    contentColor = MaterialTheme.colorScheme.onSurface,
+)
 
 // ---------------------------------------------------------------- Search bar
 
@@ -181,9 +190,9 @@ fun ControlsCard(
                 valueRange = 0f..ceilK.toFloat(),
                 modifier = Modifier.height(36.dp),
             )
-            AltitudeScale(s.ceilingFt, state.altRangeK)
+            if (s.comparing) ModelLegend(s.modelIds) else AltitudeScale(s.ceilingFt, state.altRangeK)
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                SpeedLegend(s.unit)
+                SpeedLegend(s.unit, s.arrowLayout)
                 Spacer(Modifier.width(12.dp))
                 Text(
                     "$attribution · Weather: Open-Meteo.com",
@@ -192,6 +201,28 @@ fun ControlsCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/** Colour key for compared models (replaces the altitude colour bar in comparison mode). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ModelLegend(modelIds: List<String>) {
+    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        modelIds.forEachIndexed { i, id ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val color = Color(ModelColors.argb(i))
+                Canvas(Modifier.width(18.dp).height(10.dp)) {
+                    drawLine(color, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+                }
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    OpenMeteo.short(id) + if (i == 0) " (grid)" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }
@@ -235,42 +266,62 @@ private fun AltitudeScale(ceilingFt: Int, selectedK: IntRange) {
     }
 }
 
-/** Shows how long an arrow is for a reference speed. */
+/** Arrow scale key: a reference-length arrow (fan), or arrow sizes at a few speeds (stacked). */
 @Composable
-private fun SpeedLegend(unit: SpeedUnit) {
-    val refKt = 20.0
-    val len = WindOverlay.arrowLengthDp(refKt).dp
+private fun SpeedLegend(unit: SpeedUnit, layout: ArrowLayout) {
     val color = MaterialTheme.colorScheme.onSurface
+    val style = MaterialTheme.typography.labelSmall
+    fun inUnit(kt: Double) = (kt / KT_PER_MS * unit.perMs).roundToInt()
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Canvas(Modifier.width(len).height(10.dp)) {
-            val y = size.height / 2
-            val head = 6.dp.toPx()
-            drawLine(color, Offset(0f, y), Offset(size.width - head, y), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-            val p = Path().apply {
-                moveTo(size.width, y); lineTo(size.width - head, y - head * 0.6f); lineTo(size.width - head, y + head * 0.6f); close()
+        if (layout == ArrowLayout.STACKED) {
+            val cell = 18.dp
+            listOf(10.0, 30.0, WindOverlay.STACK_FULL_KT).forEach { kt ->
+                val frac = 0.4f + 0.6f * (kt / WindOverlay.STACK_FULL_KT).toFloat().coerceIn(0f, 1f)
+                LegendArrow(color, cell * 0.95f * frac, Modifier.width(cell).height(10.dp))
+                Text("${inUnit(kt)}${if (kt >= WindOverlay.STACK_FULL_KT) "+" else ""}", style = style)
+                Spacer(Modifier.width(6.dp))
             }
-            drawPath(p, color)
+            Text(unit.label, style = style, fontWeight = FontWeight.SemiBold)
+        } else {
+            val refKt = 20.0
+            LegendArrow(color, WindOverlay.arrowLengthDp(refKt).dp, Modifier.width(WindOverlay.arrowLengthDp(refKt).dp).height(10.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("${inUnit(refKt)} ${unit.label}", style = style, fontWeight = FontWeight.SemiBold)
         }
-        Spacer(Modifier.width(6.dp))
-        val label = (refKt / KT_PER_MS * unit.perMs).roundToInt()
-        Text("$label ${unit.label}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun LegendArrow(color: Color, length: Dp, modifier: Modifier) {
+    Canvas(modifier) {
+        val y = size.height / 2
+        val len = length.toPx().coerceAtMost(size.width)
+        val head = (len * 0.4f).coerceAtMost(6.dp.toPx())
+        val x0 = (size.width - len) / 2
+        val x1 = x0 + len
+        drawLine(color, Offset(x0, y), Offset(x1 - head, y), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+        val p = Path().apply { moveTo(x1, y); lineTo(x1 - head, y - head * 0.6f); lineTo(x1 - head, y + head * 0.6f); close() }
+        drawPath(p, color)
     }
 }
 
 // ---------------------------------------------------------------- Pinned location profile
 
+/** One model's winds at the pinned location, one entry per selected altitude (low → high). */
+data class ModelProfile(val modelId: String, val color: Color, val winds: List<Pair<Int, Wind?>>)
+
 @Composable
 fun PinPanel(
     state: UiState,
-    winds: List<Pair<Int, Wind?>>,
+    profiles: List<ModelProfile>,
     expanded: Boolean,
     onToggle: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val s = state.settings
-    val fp = state.pinForecast
     val pin = state.pin ?: return
+    val elevation = state.pinForecasts.values.firstOrNull()?.elevationM
     Card(modifier, shape = PanelShape, colors = panelColors(), elevation = CardDefaults.cardElevation(6.dp)) {
         Row(
             Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
@@ -283,10 +334,9 @@ fun PinPanel(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val model = OpenMeteo.MODELS.firstOrNull { it.id == s.modelId }?.label ?: s.modelId
                 val sub = buildList {
-                    if (fp != null) add("Elev ${Format.elevation(fp.elevationM)}")
-                    add(model)
+                    if (elevation != null) add("Elev ${Format.elevation(elevation)}")
+                    add(if (s.comparing) "${s.modelIds.size} models" else OpenMeteo.label(s.primaryModelId))
                     if (state.pinFetchedAtMs > 0) add(Format.age(state.pinFetchedAtMs))
                 }.joinToString(" · ")
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -299,19 +349,26 @@ fun PinPanel(
             )
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Remove pin") }
         }
-        if (expanded) {
-            HorizontalDivider()
+        if (!expanded) return@Card
+        HorizontalDivider()
+        if (state.pinForecasts.isEmpty()) {
+            Text(
+                if (state.pinLoading) "Loading forecast…" else "No forecast loaded",
+                Modifier.padding(16.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            return@Card
+        }
+        if (s.comparing) {
+            CompareHeader(profiles, s.unit)
+            val rows = profiles.first().winds.indices.reversed().toList()
+            LazyColumn(Modifier.heightIn(max = 200.dp)) {
+                items(rows, key = { it }) { i -> CompareRow(profiles, i, s) }
+            }
+        } else {
             ProfileHeader(s.unit)
-            if (fp == null) {
-                Text(
-                    if (state.pinLoading) "Loading forecast…" else "No forecast loaded",
-                    Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            } else {
-                LazyColumn(Modifier.heightIn(max = 200.dp)) {
-                    items(winds.asReversed(), key = { it.first }) { (ft, w) -> ProfileRow(ft, w, s) }
-                }
+            LazyColumn(Modifier.heightIn(max = 200.dp)) {
+                items(profiles.first().winds.asReversed(), key = { it.first }) { (ft, w) -> ProfileRow(ft, w, s) }
             }
         }
     }
@@ -336,17 +393,15 @@ private fun ProfileHeader(unit: SpeedUnit) {
 }
 
 @Composable
+private fun altitudeText(ft: Int, s: Settings) = Format.feet(ft) + if (ft == 0 && s.altitudeRef == AltitudeRef.AGL) " sfc" else ""
+
+@Composable
 private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
-    val mono = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum")
+    val num = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum")
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Canvas(Modifier.size(10.dp)) { drawCircle(altitudeColor(ft, s.ceilingFt)) }
         Spacer(Modifier.width(8.dp))
-        Text(
-            Format.feet(ft) + if (ft == 0 && s.altitudeRef == AltitudeRef.AGL) " (sfc)" else "",
-            Modifier.width(ColAlt),
-            style = mono,
-            maxLines = 1,
-        )
+        Text(altitudeText(ft, s), Modifier.width(ColAlt), style = num, maxLines = 1)
         if (w == null) {
             Text(
                 if (s.altitudeRef == AltitudeRef.MSL) "below ground / no data" else "no data",
@@ -358,23 +413,78 @@ private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
         Row(Modifier.width(ColDir), verticalAlignment = Alignment.CenterVertically) {
             WindGlyph(w.dirFromDeg, altitudeColor(ft, s.ceilingFt))
             Spacer(Modifier.width(6.dp))
-            Text(Format.direction(w.dirFromDeg), style = mono)
+            Text(Format.direction(w.dirFromDeg), style = num)
         }
-        Text(Format.speed(w.speedMs, s.unit), Modifier.width(ColSpd), style = mono, fontWeight = FontWeight.SemiBold)
-        Text(w.tempC?.let { "${it.roundToInt()}°C" } ?: "", style = mono)
+        Text(Format.speed(w.speedMs, s.unit), Modifier.width(ColSpd), style = num, fontWeight = FontWeight.SemiBold)
+        Text(w.tempC?.let { "${it.roundToInt()}°C" } ?: "", style = num)
+    }
+}
+
+private val ColAltCompare = 58.dp
+private val ColSpread = 38.dp
+
+@Composable
+private fun CompareHeader(profiles: List<ModelProfile>, unit: SpeedUnit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        val style = MaterialTheme.typography.labelMedium
+        val c = MaterialTheme.colorScheme.onSurfaceVariant
+        Text("Alt", Modifier.width(ColAltCompare), style = style, color = c)
+        profiles.forEach { p ->
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Canvas(Modifier.size(9.dp)) { drawCircle(p.color) }
+                Spacer(Modifier.width(4.dp))
+                Text(OpenMeteo.short(p.modelId), style = style, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            }
+        }
+        Text("Δ ${unit.label}", Modifier.width(ColSpread), style = style, color = c, maxLines = 1)
+    }
+}
+
+/** One altitude: each model's direction/speed side by side, plus the largest vector disagreement between them. */
+@Composable
+private fun CompareRow(profiles: List<ModelProfile>, index: Int, s: Settings) {
+    val num = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum")
+    val ft = profiles.first().winds[index].first
+    val winds = profiles.map { it.winds.getOrNull(index)?.second }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(Format.feet(ft), Modifier.width(ColAltCompare), style = num, maxLines = 1)
+        profiles.forEachIndexed { i, p ->
+            val w = winds[i]
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                if (w == null) {
+                    Text("—", style = num, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    WindGlyph(w.dirFromDeg, p.color, size = 14.dp)
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        "${Format.direction(w.dirFromDeg)} ${Format.speed(w.speedMs, s.unit)}",
+                        style = num, maxLines = 1,
+                    )
+                }
+            }
+        }
+        val spreadMs = WindMath.maxVectorDifference(winds.filterNotNull())
+        val big = spreadMs != null && spreadMs * KT_PER_MS >= 10.0
+        Text(
+            spreadMs?.let { Format.speed(it, s.unit) } ?: "",
+            Modifier.width(ColSpread),
+            style = num,
+            fontWeight = if (big) FontWeight.Bold else FontWeight.Normal,
+            color = if (big) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
 /** Small arrow pointing downwind, matching the map arrows. */
 @Composable
-fun WindGlyph(dirFromDeg: Double, color: Color) {
+fun WindGlyph(dirFromDeg: Double, color: Color, size: Dp = 18.dp) {
     val outline = MaterialTheme.colorScheme.onSurface
-    Canvas(Modifier.size(18.dp)) {
+    Canvas(Modifier.size(size)) {
         rotate((dirFromDeg + 180).toFloat()) {
-            val cx = size.width / 2
+            val cx = this.size.width / 2
             val top = 1.dp.toPx()
-            val bottom = size.height - 1.dp.toPx()
-            val head = 6.dp.toPx()
+            val bottom = this.size.height - 1.dp.toPx()
+            val head = this.size.height * 0.33f
             drawLine(outline, Offset(cx, bottom), Offset(cx, top + head), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
             drawLine(color, Offset(cx, bottom), Offset(cx, top + head), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
             val p = Path().apply { moveTo(cx, top); lineTo(cx - head * 0.6f, top + head); lineTo(cx + head * 0.6f, top + head); close() }
@@ -427,22 +537,50 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                         FilterChip(settings.layer == l, { onChange(settings.copy(layer = l)) }, label = { Text(l.label) })
                     }
                 }
-                Section("Forecast model")
+                Section("Arrow layout")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ArrowLayout.entries.forEach { l ->
+                        FilterChip(settings.arrowLayout == l, { onChange(settings.copy(arrowLayout = l)) }, label = { Text(l.label) })
+                    }
+                }
+                Section("Forecast models (pick up to ${Settings.MAX_MODELS} to compare)")
                 OpenMeteo.MODELS.forEach { m ->
+                    val slot = settings.modelIds.indexOf(m.id)
+                    val selected = slot >= 0
+                    val enabled = selected || settings.modelIds.size < Settings.MAX_MODELS
                     Row(
                         Modifier.fillMaxWidth()
-                            .selectable(selected = settings.modelId == m.id, onClick = { onChange(settings.copy(modelId = m.id)) })
+                            .toggleable(
+                                value = selected,
+                                enabled = enabled && !(selected && settings.modelIds.size == 1),
+                                onValueChange = { on ->
+                                    onChange(settings.copy(modelIds = if (on) settings.modelIds + m.id else settings.modelIds - m.id))
+                                },
+                            )
                             .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(selected = settings.modelId == m.id, onClick = null)
+                        Checkbox(checked = selected, onCheckedChange = null, enabled = enabled)
                         Spacer(Modifier.width(8.dp))
-                        Text(m.label)
+                        Text(
+                            m.label,
+                            Modifier.weight(1f),
+                            color = if (enabled) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (selected && settings.comparing) {
+                            Canvas(Modifier.size(12.dp)) { drawCircle(Color(ModelColors.argb(slot))) }
+                        }
                     }
                 }
                 Text(
-                    "Arrows point downwind (the way the air is moving). Length is proportional to speed; " +
-                        "colour shows altitude. Tap or long-press the map to pin a location and see its full profile.",
+                    "The first model picked drives the map grid. All picked models are compared at the pinned location.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Arrows point downwind (the way the air is moving) and their length shows speed. Stacked: each " +
+                        "altitude is a row, lowest at the map point. Colour shows altitude, or the model when comparing. " +
+                        "Tap or long-press the map to pin a location.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 12.dp),

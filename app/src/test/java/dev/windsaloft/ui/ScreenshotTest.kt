@@ -21,10 +21,9 @@ import dev.windsaloft.UiState
 import dev.windsaloft.data.Camera
 import dev.windsaloft.data.Settings
 import dev.windsaloft.map.MapHandle
-import dev.windsaloft.map.WindFan
 import dev.windsaloft.map.attribution
-import dev.windsaloft.wind.AltitudeRef
 import dev.windsaloft.wind.ForecastPoint
+import dev.windsaloft.wind.Bbox
 import dev.windsaloft.wind.LatLon
 import dev.windsaloft.wind.RawSample
 import dev.windsaloft.currentHourEpoch
@@ -64,37 +63,47 @@ class ScreenshotTest {
     }
 
     @Test
-    fun renderMapScreen() {
+    fun renderSingleModel() = render("single_light", Settings(gridSize = 4))
+
+    @Test
+    fun renderCompareLight() = render("compare_light", compareSettings)
+
+    @Test
+    @Config(qualifiers = "+night")
+    fun renderCompareDark() = render("compare_dark", compareSettings)
+
+    private val compareSettings = Settings(gridSize = 3, modelIds = listOf("ncep_gfs_seamless", "ecmwf_ifs025", "icon_seamless"))
+
+    private fun render(name: String, settings: Settings) {
         Configuration.getInstance().userAgentValue = "dev.windsaloft.test"
         val now = currentHourEpoch()
         val pin = LatLon(40.10, -105.20)
-        val settings = Settings(gridSize = 4, ceilingFt = 18_000, altitudeRef = AltitudeRef.MSL)
-        val pinFp = syntheticPoint(pin, 1580.0, now, 0.0)
+        // Each model gets a slightly different profile so the comparison shows some spread.
+        val pinForecasts = settings.modelIds.mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6) }.toMap()
         val state = UiState(
-            settings = settings, pin = pin, pinLabel = "Boulder, Colorado", pinForecast = pinFp,
-            pinFetchedAtMs = System.currentTimeMillis() - 4 * 60_000, nowHourEpoch = now, hourOffset = 3, altRangeK = 6..16,
+            settings = settings, pin = pin, pinLabel = "Boulder, Colorado", pinForecasts = pinForecasts,
+            pinFetchedAtMs = System.currentTimeMillis() - 4 * 60_000, nowHourEpoch = now,
+            hourOffset = 3, altRangeK = 6..16,
         )
-        val altitudes = state.altitudesFt
-        val grid = buildList {
-            for (r in 0 until 4) for (c in 0 until 4) {
-                val p = LatLon(40.62 - r * 0.33, -105.85 + c * 0.42)
-                add(syntheticPoint(p, 1600.0 + c * 150, now, (r - c) * 0.8))
-            }
-        }
-        val fans = grid.map { WindFan(it.location, it.windsAt(state.selectedEpoch, altitudes, AltitudeRef.MSL).filterNotNull(), false) } +
-            WindFan(pin, pinFp.windsAt(state.selectedEpoch, altitudes, AltitudeRef.MSL).filterNotNull(), true)
-        val pinWinds = altitudes.zip(pinFp.windsAt(state.selectedEpoch, altitudes, AltitudeRef.MSL))
+        val profiles = buildProfiles(state)
+        val fans = buildFans(state, profiles)
 
         lateinit var map: MapHandle
         compose.setContent {
             val ctx = LocalContext.current
-            map = androidx.compose.runtime.remember { MapHandle(ctx, Camera(LatLon(40.15, -105.2), 9.0)) }
+            map = androidx.compose.runtime.remember { MapHandle(ctx, Camera(LatLon(40.0, -105.2), 9.0)) }
             WindsAloftTheme {
                 Box(Modifier.fillMaxSize()) {
                     AndroidView(factory = {
                         map.setLayer(settings.layer)
                         map.windOverlay.fans = fans
                         map.windOverlay.ceilingFt = settings.ceilingFt
+                        map.windOverlay.layout = settings.arrowLayout
+                        map.windOverlay.gridSize = settings.gridSize
+                        map.windOverlay.insetTopPx = (80 * ctx.resources.displayMetrics.density).toInt()
+                        map.windOverlay.insetBottomPx = (220 * ctx.resources.displayMetrics.density).toInt()
+                        map.windOverlay.pinInsetBottomPx = (540 * ctx.resources.displayMetrics.density).toInt()
+                        map.windOverlay.speedLabel = { ms -> Format.speed(ms, settings.unit) }
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
                     SearchBar(emptyList(), {}, {}, {}, {}, Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth())
@@ -102,23 +111,32 @@ class ScreenshotTest {
                         Modifier.align(Alignment.BottomCenter).padding(12.dp).fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        PinPanel(state, pinWinds, expanded = true, onToggle = {}, onClose = {}, modifier = Modifier.fillMaxWidth())
+                        PinPanel(state, profiles, expanded = true, onToggle = {}, onClose = {}, modifier = Modifier.fillMaxWidth())
                         ControlsCard(state, settings.layer.attribution, {}, {}, Modifier.fillMaxWidth())
                     }
                 }
             }
         }
-        // Give osmdroid a chance to fetch map tiles (works when the network allows it).
-        repeat(30) {
-            Thread.sleep(400)
-            shadowOf(Looper.getMainLooper()).idle()
-            map.mapView.invalidate()
+        repeat(5) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idle() }
+        compose.waitForIdle()
+
+        // Build the grid from the map's real viewport, exactly as the app does.
+        var bbox: Bbox? = null
+        map.obscuredTopPx = map.windOverlay.insetTopPx
+        map.obscuredBottomPx = map.windOverlay.insetBottomPx
+        map.onViewport = { bbox = it }
+        map.reportViewport()
+        val grid = bbox!!.gridPoints(settings.gridSize).mapIndexed { i, p ->
+            syntheticPoint(p, 1600.0 + (i % settings.gridSize) * 150, now, (i / settings.gridSize - i % settings.gridSize) * 0.8)
         }
+        map.windOverlay.fans = buildFans(state.copy(grid = grid), profiles)
+        map.mapView.invalidate()
+        repeat(5) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idle() }
         compose.waitForIdle()
         val root = map.mapView.rootView
         val bmp = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
         root.draw(Canvas(bmp))
-        File(outDir, "map_screen.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        File(outDir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     @Test

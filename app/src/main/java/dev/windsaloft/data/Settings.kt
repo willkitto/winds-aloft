@@ -14,16 +14,25 @@ enum class SpeedUnit(val label: String, val perMs: Double) {
 
 enum class MapLayer(val label: String) { TOPO("Topo"), STREETS("Streets"), SATELLITE("Satellite") }
 
+/** STACKED: one arrow per altitude in a vertical column (low at the bottom). FAN: all arrows share one origin. */
+enum class ArrowLayout(val label: String) { STACKED("Stacked"), FAN("Fan") }
+
 data class Settings(
     val unit: SpeedUnit = SpeedUnit.KT,
     val altitudeRef: AltitudeRef = AltitudeRef.MSL,
-    val modelId: String = OpenMeteo.MODELS.first().id,
+    /** 1–3 forecast models. The first drives the map grid; all are compared at the pinned location. */
+    val modelIds: List<String> = listOf(OpenMeteo.MODELS.first().id),
     /** Wind arrows drawn in an N×N grid across the visible map; 0 turns the grid off. */
     val gridSize: Int = 4,
     val ceilingFt: Int = 18_000,
     val layer: MapLayer = MapLayer.TOPO,
+    val arrowLayout: ArrowLayout = ArrowLayout.STACKED,
 ) {
+    val primaryModelId: String get() = modelIds.first()
+    val comparing: Boolean get() = modelIds.size > 1
+
     companion object {
+        const val MAX_MODELS = 3
         val CEILINGS = listOf(14_000, 18_000, 24_000, 30_000)
         val GRID_SIZES = listOf(0, 3, 4, 5)
     }
@@ -40,20 +49,24 @@ class Prefs(context: Context) {
         return Settings(
             unit = enumOr(sp.getString("unit", null), d.unit),
             altitudeRef = enumOr(sp.getString("altRef", null), d.altitudeRef),
-            modelId = sp.getString("model", null)?.takeIf { id -> OpenMeteo.MODELS.any { it.id == id } } ?: d.modelId,
+            modelIds = (sp.getString("models", null) ?: sp.getString("model", null)).orEmpty()
+                .split(",").filter { id -> OpenMeteo.MODELS.any { it.id == id } }.distinct().take(Settings.MAX_MODELS)
+                .ifEmpty { d.modelIds },
             gridSize = sp.getInt("grid", d.gridSize),
             ceilingFt = sp.getInt("ceiling", d.ceilingFt),
             layer = enumOr(sp.getString("layer", null), d.layer),
+            arrowLayout = enumOr(sp.getString("arrowLayout", null), d.arrowLayout),
         )
     }
 
     fun saveSettings(s: Settings) = sp.edit()
         .putString("unit", s.unit.name)
         .putString("altRef", s.altitudeRef.name)
-        .putString("model", s.modelId)
+        .putString("models", s.modelIds.joinToString(","))
         .putInt("grid", s.gridSize)
         .putInt("ceiling", s.ceilingFt)
         .putString("layer", s.layer.name)
+        .putString("arrowLayout", s.arrowLayout.name)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {
@@ -81,16 +94,16 @@ class Prefs(context: Context) {
 
     fun saveAltRange(r: IntRange) = sp.edit().putInt("altLo", r.first).putInt("altHi", r.last).apply()
 
-    /** Last pin forecast, kept on disk so the app shows data while offline. */
-    fun savePinCache(json: String, key: String, fetchedAtMs: Long) {
-        java.io.File(files, "pin_forecast.json").writeText(json)
-        sp.edit().putString("pinCacheKey", key).putLong("pinCacheTime", fetchedAtMs).apply()
+    /** Last pin forecast per model, kept on disk so the app shows data while offline. */
+    fun savePinCache(modelId: String, json: String, key: String, fetchedAtMs: Long) {
+        java.io.File(files, "pin_$modelId.json").writeText(json)
+        sp.edit().putString("pinCacheKey_$modelId", key).putLong("pinCacheTime_$modelId", fetchedAtMs).apply()
     }
 
-    fun loadPinCache(key: String): Pair<String, Long>? {
-        if (sp.getString("pinCacheKey", null) != key) return null
-        val f = java.io.File(files, "pin_forecast.json")
-        return if (f.exists()) f.readText() to sp.getLong("pinCacheTime", 0L) else null
+    fun loadPinCache(modelId: String, key: String): Pair<String, Long>? {
+        if (sp.getString("pinCacheKey_$modelId", null) != key) return null
+        val f = java.io.File(files, "pin_$modelId.json")
+        return if (f.exists()) f.readText() to sp.getLong("pinCacheTime_$modelId", 0L) else null
     }
 
     private fun android.content.SharedPreferences.getDouble(key: String) =

@@ -98,4 +98,17 @@ class WindMathTest {
         assertEquals(175.0, pts[0].lon, 1e-9)
         assertEquals(-175.0, pts[1].lon, 1e-9)
     }
+
+    @Test
+    fun vectorSpread() {
+        assertNull(WindMath.maxVectorDifference(listOf(Wind(0, 270.0, 10.0, null))))
+        // Same speed, opposite directions: 20 m/s apart.
+        val opposite = WindMath.maxVectorDifference(listOf(Wind(0, 270.0, 10.0, null), Wind(0, 90.0, 10.0, null)))!!
+        assertEquals(20.0, opposite, 1e-9)
+        // Largest pair wins.
+        val three = WindMath.maxVectorDifference(
+            listOf(Wind(0, 270.0, 10.0, null), Wind(0, 270.0, 12.0, null), Wind(0, 270.0, 15.0, null)),
+        )!!
+        assertEquals(5.0, three, 1e-9)
+    }
 }

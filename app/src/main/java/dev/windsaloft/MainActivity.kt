@@ -1,7 +1,9 @@
 package dev.windsaloft
 
 import android.os.Bundle
+import android.graphics.Color
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -23,7 +25,8 @@ class MainActivity : ComponentActivity() {
             tileFileSystemCacheMaxBytes = 1024L * 1024 * 1024
             tileFileSystemCacheTrimBytes = 800L * 1024 * 1024
         }
-        enableEdgeToEdge()
+        // The map sits under the status bar and is usually light, so keep dark status-bar icons.
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT))
         setContent {
             WindsAloftTheme { WindsAloftApp(vm) }
         }
