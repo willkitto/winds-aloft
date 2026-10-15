@@ -17,6 +17,15 @@ enum class MapLayer(val label: String) { TOPO("Topo"), STREETS("Streets"), SATEL
 /** STACKED: a vertical column per forecast source, one row per altitude (low at the bottom). FAN: all arrows share one origin. */
 enum class ArrowLayout(val label: String) { STACKED("Stacked"), FAN("Fan") }
 
+/** What arrow colour shows. AUTO: altitude, or the model when comparing. */
+enum class ArrowColor(val label: String) { AUTO("Auto"), ALTITUDE("Altitude"), SPEED("Speed"), TEMPERATURE("Temperature") }
+
+enum class TempUnit(val label: String) {
+    C("°C"), F("°F");
+
+    fun format(c: Double): String = "${(if (this == F) c * 9 / 5 + 32 else c).let { Math.round(it) }}°"
+}
+
 data class Settings(
     val unit: SpeedUnit = SpeedUnit.KT,
     val altitudeRef: AltitudeRef = AltitudeRef.MSL,
@@ -25,6 +34,9 @@ data class Settings(
     val ceilingFt: Int = 18_000,
     val layer: MapLayer = MapLayer.TOPO,
     val arrowLayout: ArrowLayout = ArrowLayout.STACKED,
+    val arrowColor: ArrowColor = ArrowColor.AUTO,
+    val tempUnit: TempUnit = TempUnit.C,
+    val showTemperature: Boolean = true,
 ) {
     val primaryModelId: String get() = modelIds.first()
     val comparing: Boolean get() = modelIds.size > 1
@@ -52,6 +64,9 @@ class Prefs(context: Context) {
             ceilingFt = sp.getInt("ceiling", d.ceilingFt),
             layer = enumOr(sp.getString("layer", null), d.layer),
             arrowLayout = enumOr(sp.getString("arrowLayout", null), d.arrowLayout),
+            arrowColor = enumOr(sp.getString("arrowColor", null), d.arrowColor),
+            tempUnit = enumOr(sp.getString("tempUnit", null), d.tempUnit),
+            showTemperature = sp.getBoolean("showTemp", d.showTemperature),
         )
     }
 
@@ -62,6 +77,9 @@ class Prefs(context: Context) {
         .putInt("ceiling", s.ceilingFt)
         .putString("layer", s.layer.name)
         .putString("arrowLayout", s.arrowLayout.name)
+        .putString("arrowColor", s.arrowColor.name)
+        .putString("tempUnit", s.tempUnit.name)
+        .putBoolean("showTemp", s.showTemperature)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {

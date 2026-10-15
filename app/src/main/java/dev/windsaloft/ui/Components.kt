@@ -1,6 +1,8 @@
 package dev.windsaloft.ui
 
 import androidx.compose.foundation.Canvas
+import dev.windsaloft.data.TempUnit
+import dev.windsaloft.data.ArrowColor
 import dev.windsaloft.wind.WindMath
 import dev.windsaloft.map.ModelColors
 import dev.windsaloft.data.ArrowLayout
@@ -73,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.windsaloft.UiState
 import dev.windsaloft.data.MapLayer
 import dev.windsaloft.data.OpenMeteo
@@ -190,7 +193,19 @@ fun ControlsCard(
                 valueRange = 0f..ceilK.toFloat(),
                 modifier = Modifier.height(36.dp),
             )
-            if (s.comparing) ModelLegend(s.modelIds) else AltitudeScale(s.ceilingFt, state.altRangeK)
+            when {
+                s.arrowColor == ArrowColor.TEMPERATURE -> ColorScale(
+                    stops = (0..20).map { Color(AltitudeColors.temperature(-40.0 + 75.0 * it / 20)) },
+                    labels = listOf(-40.0, -15.0, 10.0, 35.0).map { s.tempUnit.format(it) },
+                )
+                s.arrowColor == ArrowColor.SPEED -> ColorScale(
+                    stops = (0..20).map { Color(AltitudeColors.speed(50.0 * it / 20)) },
+                    labels = listOf(0.0, 25.0, 50.0).map { Format.speed(it / KT_PER_MS, s.unit) + if (it == 50.0) "+ ${s.unit.label}" else "" },
+                )
+                s.comparing -> ModelLegend(s.modelIds)
+                else -> AltitudeScale(s.ceilingFt, state.altRangeK)
+            }
+            if (s.comparing && s.arrowColor != ArrowColor.AUTO) ModelLegend(s.modelIds)
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 SpeedLegend(s.unit, s.arrowLayout)
                 Spacer(Modifier.width(12.dp))
@@ -239,6 +254,20 @@ private fun LabelRow(label: String, value: String) {
 }
 
 /** Colour ramp matching the arrow colours, with the selected band highlighted. */
+/** A colour ramp with evenly spaced labels underneath. */
+@Composable
+private fun ColorScale(stops: List<Color>, labels: List<String>) {
+    Column(Modifier.padding(horizontal = 10.dp)) {
+        Canvas(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))) { drawRect(Brush.horizontalGradient(stops)) }
+        Row(Modifier.fillMaxWidth()) {
+            labels.forEachIndexed { i, l ->
+                Text(l, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (i < labels.lastIndex) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
 @Composable
 private fun AltitudeScale(ceilingFt: Int, selectedK: IntRange) {
     val ceilK = ceilingFt / 1000
@@ -277,7 +306,7 @@ private fun SpeedLegend(unit: SpeedUnit, layout: ArrowLayout) {
             val cell = 18.dp
             listOf(5.0, 20.0, WindOverlay.STACK_FULL_KT).forEach { kt ->
                 val frac = WindOverlay.stackedFraction(kt)
-                LegendArrow(color, cell * 0.95f * frac, Modifier.width(cell).height(10.dp))
+                LegendArrow(color, cell * WindOverlay.STACK_LENGTH * frac, Modifier.width(cell * WindOverlay.STACK_LENGTH).height(10.dp))
                 Text("${inUnit(kt)}${if (kt >= WindOverlay.STACK_FULL_KT) "+" else ""}", style = style)
                 Spacer(Modifier.width(6.dp))
             }
@@ -416,12 +445,12 @@ private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
             Text(Format.direction(w.dirFromDeg), style = num)
         }
         Text(Format.speed(w.speedMs, s.unit), Modifier.width(ColSpd), style = num, fontWeight = FontWeight.SemiBold)
-        Text(w.tempC?.let { "${it.roundToInt()}°C" } ?: "", style = num)
+        Text(w.tempC?.let { s.tempUnit.format(it) } ?: "", style = num)
     }
 }
 
-private val ColAltCompare = 58.dp
-private val ColSpread = 38.dp
+private val ColAltCompare = 50.dp
+private val ColSpread = 32.dp
 
 @Composable
 private fun CompareHeader(profiles: List<ModelProfile>, unit: SpeedUnit) {
@@ -443,7 +472,7 @@ private fun CompareHeader(profiles: List<ModelProfile>, unit: SpeedUnit) {
 /** One altitude: each model's direction/speed side by side, plus the largest vector disagreement between them. */
 @Composable
 private fun CompareRow(profiles: List<ModelProfile>, index: Int, s: Settings) {
-    val num = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum")
+    val num = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum", fontSize = 11.sp)
     val ft = profiles.first().winds[index].first
     val winds = profiles.map { it.winds.getOrNull(index)?.second }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -454,12 +483,22 @@ private fun CompareRow(profiles: List<ModelProfile>, index: Int, s: Settings) {
                 if (w == null) {
                     Text("—", style = num, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
-                    WindGlyph(w.dirFromDeg, p.color, size = 14.dp)
-                    Spacer(Modifier.width(3.dp))
+                    WindGlyph(w.dirFromDeg, p.color, size = 12.dp)
+                    Spacer(Modifier.width(2.dp))
+                    // Aviation-style "direction/speed", then temperature.
                     Text(
-                        "${Format.direction(w.dirFromDeg)} ${Format.speed(w.speedMs, s.unit)}",
+                        "%03d/%s".format(Math.round(w.dirFromDeg) % 360, Format.speed(w.speedMs, s.unit)),
                         style = num, maxLines = 1,
                     )
+                    if (w.tempC != null) {
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            s.tempUnit.format(w.tempC),
+                            style = num,
+                            color = if (w.tempC < 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }
@@ -529,6 +568,20 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                     MapLayer.entries.forEach { l ->
                         FilterChip(settings.layer == l, { onChange(settings.copy(layer = l)) }, label = { Text(l.label) })
                     }
+                }
+                Section("Arrow colour")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ArrowColor.entries.forEach { c ->
+                        FilterChip(settings.arrowColor == c, { onChange(settings.copy(arrowColor = c)) }, label = { Text(c.label) })
+                    }
+                }
+                Section("Temperature")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TempUnit.entries.forEach { u ->
+                        FilterChip(settings.tempUnit == u, { onChange(settings.copy(tempUnit = u)) }, label = { Text(u.label) })
+                    }
+                    FilterChip(settings.showTemperature, { onChange(settings.copy(showTemperature = !settings.showTemperature)) },
+                        label = { Text("Show on map") })
                 }
                 Section("Arrow layout")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -59,7 +59,7 @@ object WindMath {
         if (samples.isEmpty() || targetM < groundM - 1.0) return null
         val first = samples.first()
         if (targetM <= first.heightM) {
-            return if (first.heightM - groundM <= SURFACE_CLAMP_M) first.copy(heightM = targetM) else null
+            return if (first.heightM - groundM <= SURFACE_CLAMP_M) first.copy(heightM = targetM, tempC = interpolateTemp(samples, targetM)) else null
         }
         if (targetM > samples.last().heightM) return null
 
@@ -72,8 +72,28 @@ object WindMath {
         val (u0, v0) = toUv(lo.speedMs, lo.dirFromDeg)
         val (u1, v1) = toUv(hi.speedMs, hi.dirFromDeg)
         val (speed, dir) = fromUv(u0 + (u1 - u0) * t, v0 + (v1 - v0) * t)
-        val temp = if (lo.tempC != null && hi.tempC != null) lo.tempC + (hi.tempC - lo.tempC) * t else null
-        return RawSample(targetM, speed, dir, temp)
+        return RawSample(targetM, speed, dir, interpolateTemp(samples, targetM))
+    }
+
+    /**
+     * Temperature at [targetM], interpolated only between samples that have one: some models give
+     * wind but no temperature at 80–180 m, and those samples mustn't blank the levels around them.
+     */
+    fun interpolateTemp(samples: List<RawSample>, targetM: Double): Double? {
+        var lo: RawSample? = null
+        var hi: RawSample? = null
+        for (s in samples) {
+            if (s.tempC == null) continue
+            if (s.heightM <= targetM) lo = s else { hi = s; break }
+        }
+        val l = lo?.tempC
+        val h = hi?.tempC
+        return when {
+            l != null && h != null -> l + (h - l) * (targetM - lo!!.heightM) / (hi!!.heightM - lo.heightM)
+            l != null && targetM - lo!!.heightM <= SURFACE_CLAMP_M -> l
+            h != null && hi!!.heightM - targetM <= SURFACE_CLAMP_M -> h
+            else -> null
+        }
     }
 }
 

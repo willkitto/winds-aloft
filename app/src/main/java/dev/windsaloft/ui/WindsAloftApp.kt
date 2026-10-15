@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -61,6 +62,8 @@ fun WindsAloftApp(vm: MainViewModel) {
     var showSettings by remember { mutableStateOf(false) }
     // Collapsed by default so the arrow columns get most of the screen; tap the panel for the table.
     var profileExpanded by rememberSaveable { mutableStateOf(false) }
+    // One tap hides every panel so the whole map is free; the arrows never resize either way.
+    var panelsHidden by rememberSaveable { mutableStateOf(false) }
 
     map.onTap = { vm.setPin(it) }
 
@@ -131,7 +134,8 @@ fun WindsAloftApp(vm: MainViewModel) {
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
     // When a pin is placed, move it to the bottom-centre of the free map area so its columns fit above it.
-    LaunchedEffect(state.pin, profileExpanded) {
+    // Opening the table later doesn't move or resize anything: it covers the map, which can be panned.
+    LaunchedEffect(state.pin) {
         val pin = state.pin ?: return@LaunchedEffect
         delay(400) // let the pin panel lay out first
         map.keepAbovePanels(pin)
@@ -152,15 +156,16 @@ fun WindsAloftApp(vm: MainViewModel) {
                 map.windOverlay.columns = columns
                 map.windOverlay.ceilingFt = s.ceilingFt
                 map.windOverlay.layout = s.arrowLayout
-                map.windOverlay.insetTopPx = map.obscuredTopPx
-                map.windOverlay.insetBottomPx = if (map.panelsTopPx > 0) it.height - map.panelsTopPx else 0
+                map.windOverlay.colorMode = s.arrowColor
+                map.windOverlay.showTemperature = s.showTemperature
                 map.windOverlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
+                map.windOverlay.tempLabel = { c -> s.tempUnit.format(c) }
                 it.invalidate()
             },
         )
 
         // Top: search
-        SearchBar(
+        if (!panelsHidden) SearchBar(
             results = state.searchResults,
             onSearch = vm::search,
             onPick = vm::selectPlace,
@@ -185,11 +190,23 @@ fun WindsAloftApp(vm: MainViewModel) {
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (panelsHidden) {
+                ExtendedFloatingActionButton(
+                    onClick = { panelsHidden = false },
+                    icon = { Icon(AppIcons.FullscreenExit, contentDescription = null) },
+                    text = { Text("Show panels") },
+                    modifier = Modifier.align(Alignment.End),
+                )
+                return@Column
+            }
             Column(
                 Modifier.align(Alignment.End),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End,
             ) {
+                SmallFloatingActionButton(onClick = { panelsHidden = true }) {
+                    Icon(AppIcons.Fullscreen, contentDescription = "Hide panels")
+                }
                 SmallFloatingActionButton(onClick = {
                     val next = MapLayer.entries[(s.layer.ordinal + 1) % MapLayer.entries.size]
                     vm.updateSettings(s.copy(layer = next))

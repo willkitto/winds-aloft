@@ -9,6 +9,12 @@ object AltitudeColors {
         return turbo(0.1 + 0.85 * f)
     }
 
+    /** 0 kt (blue) … 50 kt (red). */
+    fun speed(kt: Double): Int = turbo(0.12 + 0.83 * (kt / 50.0).coerceIn(0.0, 1.0))
+
+    /** −40 °C (deep blue) … +35 °C (red). */
+    fun temperature(c: Double): Int = turbo(0.08 + 0.87 * ((c + 40.0) / 75.0).coerceIn(0.0, 1.0))
+
     /** Polynomial approximation of Google's Turbo colormap (Apache 2.0). */
     fun turbo(xIn: Double): Int {
         val x = xIn.coerceIn(0.0, 1.0)

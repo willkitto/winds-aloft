@@ -38,6 +38,15 @@ object AppIcons {
         "M11.99,18.54l-7.37,-5.73L3,14.07l9,7 9,-7 -1.63,-1.27 -7.38,5.74zM12,16l7.36,-5.73L21,9l-9,-7 -9,7 1.63,1.27L12,16z",
     )
 
+    val Fullscreen = icon(
+        "Fullscreen",
+        "M7,14H5v5h5v-2H7V14zM5,10h2V7h3V5H5V10zM17,17h-3v2h5v-5h-2V17zM14,5v2h3v3h2V5H14z",
+    )
+    val FullscreenExit = icon(
+        "FullscreenExit",
+        "M5,16h3v3h2v-5H5V16zM8,8H5v2h5V5H8V8zM14,19h2v-3h3v-2h-5V19zM16,5h-2v5h5V8h-3V5z",
+    )
+
     private fun icon(name: String, path: String) = ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
         .addPath(addPathNodes(path), fill = SolidColor(Color.Black))
         .build()

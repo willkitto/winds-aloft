@@ -3,9 +3,10 @@
 Upper-wind forecasts drawn on a map. The pinned location gets a column of arrows rising from it, one row per 1,000 ft altitude step, lowest at the bottom. When you compare forecast models, each model gets its own column.
 
 - **Direction**: arrows point **downwind** (the way the air is moving).
-- **Speed**: a bigger arrow means stronger wind, and the speed is printed beside each arrow.
-- **Altitude**: row position, labelled down the left side. With one model, colour also shows altitude, from blue (low) through green and yellow to red (high). When comparing, colour shows the model.
-- **Ground**: in MSL mode, a dashed **GND** line marks where altitudes go below the terrain.
+- **Speed**: a longer arrow means stronger wind, and the speed is printed beside each arrow, followed by the **temperature**.
+- **Altitude**: row position, labelled down the left side. Rows have a fixed spacing, so the display never shrinks when panels open; pan the map to see what's underneath, or hide all panels with one tap.
+- **Colour**: altitude by default, or the model when comparing. Settings can switch it to speed or temperature.
+- **Ground**: in MSL mode, altitudes below the terrain are left out, so the column starts at the pin, which is marked **GND**.
 
 | One model | Comparing three models |
 |---|---|

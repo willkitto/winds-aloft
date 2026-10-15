@@ -57,7 +57,7 @@ class ScreenshotTest {
         val profiles = hours.mapIndexed { h, _ ->
             (0..12).map { i ->
                 val height = elevation + 10 + i * 700.0
-                RawSample(height, 3.0 + i * 1.8 + skew, (170.0 + i * 11 + skew * 4 + h) % 360, 18.0 - i * 4.5)
+                RawSample(height, 3.0 + i * 1.8 + skew, (205.0 + i * 7 + skew * 4 + h) % 360, 18.0 - i * 4.5)
             }
         }
         return ForecastPoint(at, elevation, hours.toLongArray(), profiles)
@@ -68,6 +68,9 @@ class ScreenshotTest {
 
     @Test
     fun renderCompareLight() = render("compare_light", compareSettings, expanded = false)
+
+    @Test
+    fun renderTemperatureColour() = render("temperature_light", Settings(arrowColor = dev.windsaloft.data.ArrowColor.TEMPERATURE), expanded = false)
 
     @Test
     @Config(qualifiers = "+night")
@@ -101,6 +104,8 @@ class ScreenshotTest {
                         map.windOverlay.ceilingFt = settings.ceilingFt
                         map.windOverlay.layout = settings.arrowLayout
                         map.windOverlay.speedLabel = { ms -> Format.speed(ms, settings.unit) }
+                        map.windOverlay.tempLabel = { c -> settings.tempUnit.format(c) }
+                        map.windOverlay.colorMode = settings.arrowColor
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
                     SearchBar(
@@ -125,8 +130,6 @@ class ScreenshotTest {
         repeat(5) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idle() }
         compose.waitForIdle()
         // Same as the app: size the columns to the free map area and move the pin to its bottom-centre.
-        map.windOverlay.insetTopPx = map.obscuredTopPx
-        map.windOverlay.insetBottomPx = map.mapView.height - map.panelsTopPx
         map.mapView.controller.setCenter(map.mapView.projection.fromPixels(
             map.mapView.width / 2,
             map.mapView.height / 2 + (map.mapView.projection.toPixels(org.osmdroid.util.GeoPoint(pin.lat, pin.lon), null).y -

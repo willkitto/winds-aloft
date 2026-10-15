@@ -91,4 +91,17 @@ class WindMathTest {
         )!!
         assertEquals(5.0, three, 1e-9)
     }
+
+    @Test
+    fun temperatureSkipsSamplesWithoutOne() {
+        // Like ECMWF: wind at 120 m with no temperature, between two levels that have one.
+        val samples = listOf(
+            RawSample(1010.0, 3.0, 180.0, 10.0),
+            RawSample(1120.0, 5.0, 190.0, null),
+            RawSample(3000.0, 15.0, 270.0, -10.0),
+        )
+        val w = WindMath.interpolate(samples, 2005.0, 1000.0)!!
+        assertEquals(0.0, w.tempC!!, 1e-9)
+        assertNull(WindMath.interpolate(listOf(RawSample(0.0, 1.0, 0.0, null), RawSample(100.0, 1.0, 0.0, null)), 50.0, 0.0)!!.tempC)
+    }
 }
