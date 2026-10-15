@@ -44,6 +44,21 @@ Requires JDK 17+ and the Android SDK (API 36).
 ```
 Or open the folder in Android Studio.
 
+## Design playground (browser)
+
+`playground/index.html` is a browser page for trying arrow designs side by side. It draws the app's wind columns, ported from `WindOverlay.kt`, in phone-sized frames. Each frame has its own design settings:
+- layout: stacked or fan
+- glyph: arrow, triangle or wind barb
+- row size, arrow size and line weight
+- colour: by altitude, speed or model
+- labels and map fading
+
+The forecast, altitude band and app-panel controls apply to every frame at once. **Copy design** exports a frame's settings as JSON, so a winning design can be ported back into the app.
+
+- **Live mode:** open it from GitHub Pages or a local web server (`cd playground && python3 -m http.server`). It pulls live Open-Meteo forecasts and map tiles for any location you search or tap.
+- **Snapshot mode:** when it can't reach the network, as in a claude.ai artifact, it uses `playground/snapshot.js`, a captured forecast with bundled map tiles for a few sample locations. To refresh it, run `python3 playground/tools/make_snapshot.py`. Add `--merge` to only fill in what's missing.
+- **GitHub Pages:** `.github/workflows/pages.yml` publishes the playground on every push to `main` that touches `playground/`. Turn it on once under *Settings → Pages → Source: GitHub Actions*. The playground is then at `https://<user>.github.io/winds-aloft/`.
+
 ## Testing without a phone (and side by side)
 
 **Variants install side by side.** Building with `-Pvariant=<name>` gives the app its own id and name, for example *Winds Aloft (big-arrows)*. Several experiments can then be installed next to each other and the normal app:
