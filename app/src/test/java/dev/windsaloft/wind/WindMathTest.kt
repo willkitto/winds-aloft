@@ -80,26 +80,6 @@ class WindMathTest {
     }
 
     @Test
-    fun bboxGrid() {
-        val b = Bbox(north = 41.0, south = 39.0, east = -104.0, west = -106.0)
-        val pts = b.gridPoints(2)
-        assertEquals(4, pts.size)
-        assertEquals(LatLon(40.5, -105.5), pts[0])
-        assertEquals(LatLon(39.5, -104.5), pts[3])
-        assertTrue(b.similarTo(b.copy(north = 41.1, south = 39.1)))
-        assertTrue(!b.similarTo(b.copy(north = 42.0, south = 40.0)))
-    }
-
-    @Test
-    fun bboxAcrossAntimeridian() {
-        val b = Bbox(north = 10.0, south = 0.0, east = -170.0, west = 170.0)
-        assertEquals(20.0, b.lonSpan, 1e-9)
-        val pts = b.gridPoints(2)
-        assertEquals(175.0, pts[0].lon, 1e-9)
-        assertEquals(-175.0, pts[1].lon, 1e-9)
-    }
-
-    @Test
     fun vectorSpread() {
         assertNull(WindMath.maxVectorDifference(listOf(Wind(0, 270.0, 10.0, null))))
         // Same speed, opposite directions: 20 m/s apart.

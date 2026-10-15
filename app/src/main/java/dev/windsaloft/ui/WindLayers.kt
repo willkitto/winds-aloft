@@ -3,7 +3,8 @@ package dev.windsaloft.ui
 import androidx.compose.ui.graphics.Color
 import dev.windsaloft.UiState
 import dev.windsaloft.map.ModelColors
-import dev.windsaloft.map.WindFan
+import dev.windsaloft.data.OpenMeteo
+import dev.windsaloft.map.WindColumn
 
 /** Pin winds per selected model (in selection order) for the chosen time and altitudes. */
 fun buildProfiles(state: UiState): List<ModelProfile> {
@@ -17,20 +18,17 @@ fun buildProfiles(state: UiState): List<ModelProfile> {
 }
 
 /**
- * Arrow columns for the map. Single model: coloured by altitude. Comparing: coloured by model
- * (altitude is then shown by row position); the grid uses the first model's colour.
+ * Map columns for the pin, one per model in selection order. Single model: arrows coloured by
+ * altitude. Comparing: each column takes its model's colour and is labelled with the model name.
  */
-fun buildFans(state: UiState, profiles: List<ModelProfile>): List<WindFan> {
+fun buildColumns(state: UiState, profiles: List<ModelProfile>): List<WindColumn> {
     val s = state.settings
-    val gridColor = if (s.comparing) ModelColors.argb(0) else null
-    val grid = state.grid.map {
-        WindFan(it.location, it.windsAt(state.selectedEpoch, state.altitudesFt, s.altitudeRef), false, gridColor)
-    }
-    val pin = state.pin ?: return grid
-    // In selection order: the overlay lays compared models out side by side in this order.
-    val pinFans = profiles.mapIndexed { i, p ->
+    return profiles.map { p ->
         val slot = s.modelIds.indexOf(p.modelId)
-        WindFan(pin, p.winds.map { it.second }, true, if (s.comparing) ModelColors.argb(slot) else null, labels = i == 0)
+        WindColumn(
+            label = if (s.comparing) OpenMeteo.short(p.modelId) else null,
+            color = if (s.comparing) ModelColors.argb(slot) else null,
+            winds = p.winds.map { it.second },
+        )
     }
-    return grid + pinFans.ifEmpty { listOf(WindFan(pin, emptyList(), true)) }
 }

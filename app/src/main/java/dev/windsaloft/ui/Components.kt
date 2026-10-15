@@ -168,7 +168,7 @@ fun ControlsCard(
     val s = state.settings
     val ceilK = s.ceilingFt / 1000
     Card(modifier, shape = PanelShape, colors = panelColors(), elevation = CardDefaults.cardElevation(6.dp)) {
-        if (state.gridLoading || state.pinLoading) {
+        if (state.pinLoading) {
             LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
         } else {
             Spacer(Modifier.height(2.dp))
@@ -220,7 +220,7 @@ private fun ModelLegend(modelIds: List<String>) {
                 }
                 Spacer(Modifier.width(5.dp))
                 Text(
-                    OpenMeteo.short(id) + if (i == 0) " (grid)" else "",
+                    OpenMeteo.short(id),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -275,8 +275,8 @@ private fun SpeedLegend(unit: SpeedUnit, layout: ArrowLayout) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (layout == ArrowLayout.STACKED) {
             val cell = 18.dp
-            listOf(10.0, 30.0, WindOverlay.STACK_FULL_KT).forEach { kt ->
-                val frac = 0.4f + 0.6f * (kt / WindOverlay.STACK_FULL_KT).toFloat().coerceIn(0f, 1f)
+            listOf(5.0, 20.0, WindOverlay.STACK_FULL_KT).forEach { kt ->
+                val frac = WindOverlay.stackedFraction(kt)
                 LegendArrow(color, cell * 0.95f * frac, Modifier.width(cell).height(10.dp))
                 Text("${inUnit(kt)}${if (kt >= WindOverlay.STACK_FULL_KT) "+" else ""}", style = style)
                 Spacer(Modifier.width(6.dp))
@@ -524,13 +524,6 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                             label = { Text("${Format.feet(c)} ft") })
                     }
                 }
-                Section("Map arrow grid")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Settings.GRID_SIZES.forEach { n ->
-                        FilterChip(settings.gridSize == n, { onChange(settings.copy(gridSize = n)) },
-                            label = { Text(if (n == 0) "Off" else "$n × $n") })
-                    }
-                }
                 Section("Map style")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MapLayer.entries.forEach { l ->
@@ -573,14 +566,14 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                     }
                 }
                 Text(
-                    "The first model picked drives the map grid. All picked models are compared at the pinned location.",
+                    "Each picked model gets its own column of arrows on the map and in the table.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Arrows point downwind (the way the air is moving) and their length shows speed. Stacked: each " +
-                        "altitude is a row, lowest at the map point. Colour shows altitude, or the model when comparing. " +
-                        "Tap or long-press the map to pin a location.",
+                    "Arrows point downwind (the way the air is moving). Stacked: each altitude is a row, lowest at " +
+                        "the pin; a bigger arrow is a stronger wind and the speed is printed beside it. Colour shows " +
+                        "altitude, or the model when comparing. Tap or long-press the map to move the pin.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 12.dp),

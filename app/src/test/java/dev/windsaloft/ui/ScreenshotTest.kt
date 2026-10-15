@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -23,7 +25,6 @@ import dev.windsaloft.data.Settings
 import dev.windsaloft.map.MapHandle
 import dev.windsaloft.map.attribution
 import dev.windsaloft.wind.ForecastPoint
-import dev.windsaloft.wind.Bbox
 import dev.windsaloft.wind.LatLon
 import dev.windsaloft.wind.RawSample
 import dev.windsaloft.currentHourEpoch
@@ -63,18 +64,18 @@ class ScreenshotTest {
     }
 
     @Test
-    fun renderSingleModel() = render("single_light", Settings(gridSize = 4))
+    fun renderSingleModel() = render("single_light", Settings(), expanded = false)
 
     @Test
-    fun renderCompareLight() = render("compare_light", compareSettings)
+    fun renderCompareLight() = render("compare_light", compareSettings, expanded = false)
 
     @Test
     @Config(qualifiers = "+night")
-    fun renderCompareDark() = render("compare_dark", compareSettings)
+    fun renderCompareDarkExpanded() = render("compare_dark_table", compareSettings, expanded = true)
 
-    private val compareSettings = Settings(gridSize = 3, modelIds = listOf("ncep_gfs_seamless", "ecmwf_ifs025", "icon_seamless"))
+    private val compareSettings = Settings(modelIds = listOf("ncep_gfs_seamless", "ecmwf_ifs025", "icon_seamless"))
 
-    private fun render(name: String, settings: Settings) {
+    private fun render(name: String, settings: Settings, expanded: Boolean) {
         Configuration.getInstance().userAgentValue = "dev.windsaloft.test"
         val now = currentHourEpoch()
         val pin = LatLon(40.10, -105.20)
@@ -83,35 +84,39 @@ class ScreenshotTest {
         val state = UiState(
             settings = settings, pin = pin, pinLabel = "Boulder, Colorado", pinForecasts = pinForecasts,
             pinFetchedAtMs = System.currentTimeMillis() - 4 * 60_000, nowHourEpoch = now,
-            hourOffset = 3, altRangeK = 6..16,
+            hourOffset = 3, altRangeK = 4..14,
         )
         val profiles = buildProfiles(state)
-        val fans = buildFans(state, profiles)
 
         lateinit var map: MapHandle
         compose.setContent {
             val ctx = LocalContext.current
-            map = androidx.compose.runtime.remember { MapHandle(ctx, Camera(LatLon(40.0, -105.2), 9.0)) }
+            map = androidx.compose.runtime.remember { MapHandle(ctx, Camera(LatLon(40.0, -105.2), 10.0)) }
             WindsAloftTheme {
                 Box(Modifier.fillMaxSize()) {
                     AndroidView(factory = {
                         map.setLayer(settings.layer)
-                        map.windOverlay.fans = fans
+                        map.windOverlay.location = pin
+                        map.windOverlay.columns = buildColumns(state, profiles)
                         map.windOverlay.ceilingFt = settings.ceilingFt
                         map.windOverlay.layout = settings.arrowLayout
-                        map.windOverlay.gridSize = settings.gridSize
-                        map.windOverlay.insetTopPx = (80 * ctx.resources.displayMetrics.density).toInt()
-                        map.windOverlay.insetBottomPx = (220 * ctx.resources.displayMetrics.density).toInt()
-                        map.windOverlay.pinInsetBottomPx = (540 * ctx.resources.displayMetrics.density).toInt()
                         map.windOverlay.speedLabel = { ms -> Format.speed(ms, settings.unit) }
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
-                    SearchBar(emptyList(), {}, {}, {}, {}, Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth())
+                    SearchBar(
+                        emptyList(), {}, {}, {}, {},
+                        Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth()
+                            .onGloballyPositioned { map.obscuredTopPx = it.boundsInRoot().bottom.toInt() },
+                    )
                     Column(
                         Modifier.align(Alignment.BottomCenter).padding(12.dp).fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        PinPanel(state, profiles, expanded = true, onToggle = {}, onClose = {}, modifier = Modifier.fillMaxWidth())
+                        PinPanel(
+                            state, profiles, expanded = expanded, onToggle = {}, onClose = {},
+                            modifier = Modifier.fillMaxWidth()
+                                .onGloballyPositioned { map.panelsTopPx = it.boundsInRoot().top.toInt() },
+                        )
                         ControlsCard(state, settings.layer.attribution, {}, {}, Modifier.fillMaxWidth())
                     }
                 }
@@ -119,19 +124,15 @@ class ScreenshotTest {
         }
         repeat(5) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idle() }
         compose.waitForIdle()
-
-        // Build the grid from the map's real viewport, exactly as the app does.
-        var bbox: Bbox? = null
-        map.obscuredTopPx = map.windOverlay.insetTopPx
-        map.obscuredBottomPx = map.windOverlay.insetBottomPx
-        map.onViewport = { bbox = it }
-        map.reportViewport()
-        val grid = bbox!!.gridPoints(settings.gridSize).mapIndexed { i, p ->
-            syntheticPoint(p, 1600.0 + (i % settings.gridSize) * 150, now, (i / settings.gridSize - i % settings.gridSize) * 0.8)
-        }
-        map.windOverlay.fans = buildFans(state.copy(grid = grid), profiles)
-        map.mapView.invalidate()
-        repeat(5) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idle() }
+        // Same as the app: size the columns to the free map area and move the pin to its bottom-centre.
+        map.windOverlay.insetTopPx = map.obscuredTopPx
+        map.windOverlay.insetBottomPx = map.mapView.height - map.panelsTopPx
+        map.mapView.controller.setCenter(map.mapView.projection.fromPixels(
+            map.mapView.width / 2,
+            map.mapView.height / 2 + (map.mapView.projection.toPixels(org.osmdroid.util.GeoPoint(pin.lat, pin.lon), null).y -
+                (map.panelsTopPx - (28 * map.mapView.resources.displayMetrics.density).toInt())),
+        ))
+        repeat(10) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idle(); map.mapView.invalidate() }
         compose.waitForIdle()
         val root = map.mapView.rootView
         val bmp = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)

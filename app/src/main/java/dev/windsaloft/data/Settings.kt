@@ -14,16 +14,14 @@ enum class SpeedUnit(val label: String, val perMs: Double) {
 
 enum class MapLayer(val label: String) { TOPO("Topo"), STREETS("Streets"), SATELLITE("Satellite") }
 
-/** STACKED: one arrow per altitude in a vertical column (low at the bottom). FAN: all arrows share one origin. */
+/** STACKED: a vertical column per forecast source, one row per altitude (low at the bottom). FAN: all arrows share one origin. */
 enum class ArrowLayout(val label: String) { STACKED("Stacked"), FAN("Fan") }
 
 data class Settings(
     val unit: SpeedUnit = SpeedUnit.KT,
     val altitudeRef: AltitudeRef = AltitudeRef.MSL,
-    /** 1–3 forecast models. The first drives the map grid; all are compared at the pinned location. */
+    /** 1–3 forecast models, compared side by side at the pinned location. */
     val modelIds: List<String> = listOf(OpenMeteo.MODELS.first().id),
-    /** Wind arrows drawn in an N×N grid across the visible map; 0 turns the grid off. */
-    val gridSize: Int = 4,
     val ceilingFt: Int = 18_000,
     val layer: MapLayer = MapLayer.TOPO,
     val arrowLayout: ArrowLayout = ArrowLayout.STACKED,
@@ -34,7 +32,6 @@ data class Settings(
     companion object {
         const val MAX_MODELS = 3
         val CEILINGS = listOf(14_000, 18_000, 24_000, 30_000)
-        val GRID_SIZES = listOf(0, 3, 4, 5)
     }
 }
 
@@ -52,7 +49,6 @@ class Prefs(context: Context) {
             modelIds = (sp.getString("models", null) ?: sp.getString("model", null)).orEmpty()
                 .split(",").filter { id -> OpenMeteo.MODELS.any { it.id == id } }.distinct().take(Settings.MAX_MODELS)
                 .ifEmpty { d.modelIds },
-            gridSize = sp.getInt("grid", d.gridSize),
             ceilingFt = sp.getInt("ceiling", d.ceilingFt),
             layer = enumOr(sp.getString("layer", null), d.layer),
             arrowLayout = enumOr(sp.getString("arrowLayout", null), d.arrowLayout),
@@ -63,7 +59,6 @@ class Prefs(context: Context) {
         .putString("unit", s.unit.name)
         .putString("altRef", s.altitudeRef.name)
         .putString("models", s.modelIds.joinToString(","))
-        .putInt("grid", s.gridSize)
         .putInt("ceiling", s.ceilingFt)
         .putString("layer", s.layer.name)
         .putString("arrowLayout", s.arrowLayout.name)

@@ -10,12 +10,10 @@ import dev.windsaloft.data.OpenMeteo
 import dev.windsaloft.data.Place
 import dev.windsaloft.data.Prefs
 import dev.windsaloft.data.Settings
-import dev.windsaloft.wind.Bbox
 import dev.windsaloft.wind.ForecastPoint
 import dev.windsaloft.wind.LatLon
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -24,9 +22,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -40,8 +35,6 @@ data class UiState(
     val pinForecasts: Map<String, ForecastPoint> = emptyMap(),
     val pinFetchedAtMs: Long = 0L,
     val pinLoading: Boolean = false,
-    val grid: List<ForecastPoint> = emptyList(),
-    val gridLoading: Boolean = false,
     val nowHourEpoch: Long = currentHourEpoch(),
     /** Hours after the current hour. */
     val hourOffset: Int = 0,
@@ -55,7 +48,7 @@ data class UiState(
 
     val maxHourOffset: Int
         get() {
-            val last = pinForecasts.values.maxOfOrNull { it.lastEpochSec } ?: grid.firstOrNull()?.lastEpochSec ?: return 72
+            val last = pinForecasts.values.maxOfOrNull { it.lastEpochSec } ?: return 72
             return ((last - nowHourEpoch) / 3600L).toInt().coerceIn(0, 120)
         }
 
@@ -66,7 +59,6 @@ data class CameraRequest(val target: LatLon, val zoom: Double?)
 
 fun currentHourEpoch(): Long = System.currentTimeMillis() / 1000L / 3600L * 3600L
 
-@OptIn(FlowPreview::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
 
@@ -81,18 +73,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val initialCamera: Camera? = prefs.loadCamera()
 
-    private val viewport = MutableStateFlow<Bbox?>(null)
-    private var lastGrid: Triple<Bbox, String, Long>? = null
     private var pinJob: Job? = null
-    private var gridJob: Job? = null
 
     init {
         Http.userAgent = "${BuildConfig.APPLICATION_ID}/${BuildConfig.VERSION_NAME} (Android)"
         loadPinCache()
         if (_state.value.pin != null) fetchPin()
-        viewModelScope.launch {
-            viewport.filterNotNull().debounce(900).collectLatest { fetchGrid(it, force = false) }
-        }
     }
 
     private fun initialState(): UiState {
@@ -171,50 +157,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ---- Grid of arrows across the visible map ----
-
-    fun onViewportChanged(bbox: Bbox) {
-        viewport.value = bbox
-    }
-
-    private suspend fun fetchGrid(bbox: Bbox, force: Boolean) {
-        val settings = _state.value.settings
-        if (settings.gridSize == 0) {
-            _state.update { it.copy(grid = emptyList()) }
-            return
-        }
-        val key = "${settings.primaryModelId}|${settings.ceilingFt}|${settings.gridSize}"
-        val last = lastGrid
-        val fresh = last != null && System.currentTimeMillis() - last.third < 30 * 60_000L
-        if (!force && fresh && last!!.second == key && last.first.similarTo(bbox)) return
-
-        val points = bbox.gridPoints(settings.gridSize)
-        _state.update { it.copy(gridLoading = true) }
-        try {
-            val url = OpenMeteo.forecastUrl(points, settings.primaryModelId, settings.ceilingFt, includeTemperature = false)
-            val json = Http.get(url)
-            val grid = withContext(Dispatchers.Default) { OpenMeteo.parse(json, points) }
-            lastGrid = Triple(bbox, key, System.currentTimeMillis())
-            _state.update { it.copy(grid = grid, nowHourEpoch = currentHourEpoch()) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            _messages.tryEmit("Couldn't load wind grid: ${e.message}")
-        } finally {
-            _state.update { it.copy(gridLoading = false) }
-        }
-    }
-
-    private fun refetchGrid() {
-        val bbox = viewport.value ?: return
-        gridJob?.cancel()
-        gridJob = viewModelScope.launch { fetchGrid(bbox, force = true) }
-    }
-
     fun refresh() {
         _state.update { it.copy(nowHourEpoch = currentHourEpoch()) }
         fetchPin()
-        refetchGrid()
     }
 
     /** Called when the app returns to the foreground so "now" stays current. */
@@ -243,9 +188,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         prefs.saveAltRange(_state.value.altRangeK)
         if (old.modelIds != new.modelIds || old.ceilingFt != new.ceilingFt) fetchPin()
-        if (old.primaryModelId != new.primaryModelId || old.ceilingFt != new.ceilingFt || old.gridSize != new.gridSize) {
-            refetchGrid()
-        }
     }
 
     fun saveCamera(c: Camera) = prefs.saveCamera(c)

@@ -59,10 +59,10 @@ fun WindsAloftApp(vm: MainViewModel) {
     val map = remember { MapHandle(context, vm.initialCamera) }
     val snackbar = remember { SnackbarHostState() }
     var showSettings by remember { mutableStateOf(false) }
-    var profileExpanded by rememberSaveable { mutableStateOf(true) }
+    // Collapsed by default so the arrow columns get most of the screen; tap the panel for the table.
+    var profileExpanded by rememberSaveable { mutableStateOf(false) }
 
     map.onTap = { vm.setPin(it) }
-    map.onViewport = vm::onViewportChanged
 
     // ---- Location ----
     fun hasLocationPermission() =
@@ -130,7 +130,7 @@ fun WindsAloftApp(vm: MainViewModel) {
     }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
-    // When a pin is placed, make sure its arrow column isn't hidden behind the panels.
+    // When a pin is placed, move it to the bottom-centre of the free map area so its columns fit above it.
     LaunchedEffect(state.pin, profileExpanded) {
         val pin = state.pin ?: return@LaunchedEffect
         delay(400) // let the pin panel lay out first
@@ -140,7 +140,7 @@ fun WindsAloftApp(vm: MainViewModel) {
     // ---- Derived wind data for the selected time + altitudes ----
     val s = state.settings
     val profiles = remember(state.pinForecasts, state.selectedEpoch, state.altRangeK, s) { buildProfiles(state) }
-    val fans = remember(state.grid, profiles, state.pin, state.selectedEpoch, state.altRangeK, s) { buildFans(state, profiles) }
+    val columns = remember(profiles, s.comparing) { buildColumns(state, profiles) }
 
     Box(Modifier.fillMaxSize()) {
         AndroidView(
@@ -148,13 +148,12 @@ fun WindsAloftApp(vm: MainViewModel) {
             modifier = Modifier.fillMaxSize(),
             update = {
                 map.setLayer(s.layer)
-                map.windOverlay.fans = fans
+                map.windOverlay.location = state.pin
+                map.windOverlay.columns = columns
                 map.windOverlay.ceilingFt = s.ceilingFt
                 map.windOverlay.layout = s.arrowLayout
-                map.windOverlay.gridSize = s.gridSize
                 map.windOverlay.insetTopPx = map.obscuredTopPx
-                map.windOverlay.insetBottomPx = map.obscuredBottomPx
-                map.windOverlay.pinInsetBottomPx = if (map.panelsTopPx > 0) it.height - map.panelsTopPx else 0
+                map.windOverlay.insetBottomPx = if (map.panelsTopPx > 0) it.height - map.panelsTopPx else 0
                 map.windOverlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
                 it.invalidate()
             },
@@ -213,7 +212,10 @@ fun WindsAloftApp(vm: MainViewModel) {
                     onClose = vm::clearPin,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onGloballyPositioned { map.panelsTopPx = it.boundsInRoot().top.toInt() },
+                        .onGloballyPositioned {
+                            val top = it.boundsInRoot().top.toInt()
+                            if (top != map.panelsTopPx) { map.panelsTopPx = top; map.mapView.invalidate() }
+                        },
                 )
             } else {
                 Surface(
@@ -223,7 +225,7 @@ fun WindsAloftApp(vm: MainViewModel) {
                     modifier = Modifier.align(Alignment.CenterHorizontally),
                 ) {
                     Text(
-                        "Tap the map to see the full wind profile for that spot",
+                        "Tap the map to see the winds aloft there",
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                     )
@@ -236,17 +238,7 @@ fun WindsAloftApp(vm: MainViewModel) {
                 onAltRange = vm::setAltRange,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .onGloballyPositioned { coords ->
-                        val rootHeight = map.mapView.height
-                        if (rootHeight > 0) {
-                            val newBottom = (rootHeight - coords.boundsInRoot().top).toInt()
-                            if (state.pin == null) map.panelsTopPx = coords.boundsInRoot().top.toInt()
-                            if (newBottom != map.obscuredBottomPx) {
-                                map.obscuredBottomPx = newBottom
-                                map.reportViewport()
-                            }
-                        }
-                    },
+                    .onGloballyPositioned { if (state.pin == null) map.panelsTopPx = it.boundsInRoot().top.toInt() },
             )
         }
 
