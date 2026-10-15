@@ -1,0 +1,56 @@
+# Builds every pushed branch as its own side-by-side app variant, runs the tests, and renders
+# UI screenshots. Download the APK / screenshots from the run's "Artifacts" section.
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Name the variant after the branch
+        run: |
+          SAFE=$(echo "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9_-' '-' | sed 's/-*$//')
+          echo "VARIANT=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          echo "SAFE_NAME=$SAFE" >> "$GITHUB_ENV"
+
+      - name: Test, render screenshots, build APK
+        run: >
+          ./gradlew testDebugUnitTest assembleRelease
+          -Pvariant="$VARIANT"
+          -Dscreenshot.dir="$GITHUB_WORKSPACE/screenshots"
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk "WindsAloft-$SAFE_NAME.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ env.SAFE_NAME }}
+          path: WindsAloft-${{ env.SAFE_NAME }}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ env.SAFE_NAME }}
+          path: screenshots/*.png
+
+      - name: Summary
+        run: |
+          {
+            echo "### Winds Aloft — \`$VARIANT\`"
+            echo "Installs as **Winds Aloft ($VARIANT)** alongside other variants (\`main\` installs as plain *Winds Aloft*)."
+            echo "Download **apk-$SAFE_NAME** and **screenshots-$SAFE_NAME** from the Artifacts section below."
+          } >> "$GITHUB_STEP_SUMMARY"

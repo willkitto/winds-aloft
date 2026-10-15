@@ -6,6 +6,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+/*
+ * Side-by-side variants: `./gradlew assembleRelease -Pvariant=big-arrows` builds an app with its own
+ * id (dev.windsaloft.big_arrows) and name ("Winds Aloft (big-arrows)"), so several experiments can be
+ * installed next to each other on one phone or emulator. CI sets this from the branch name.
+ */
+val variantLabel: String? = (findProperty("variant") as String?)?.trim()?.takeIf { it.isNotEmpty() && it != "main" }
+val variantIdSuffix: String? = variantLabel
+    ?.lowercase()?.replace(Regex("[^a-z0-9]+"), "_")?.trim('_')
+    ?.let { if (it.first().isDigit()) "v_$it" else it }
+
 android {
     namespace = "dev.windsaloft"
     compileSdk = 36
@@ -16,6 +26,12 @@ android {
         targetSdk = 36
         versionCode = 3
         versionName = "0.3.0"
+
+        resValue("string", "app_name", if (variantLabel == null) "Winds Aloft" else "Winds Aloft ($variantLabel)")
+        if (variantIdSuffix != null) {
+            applicationIdSuffix = ".$variantIdSuffix"
+            versionNameSuffix = "-$variantIdSuffix"
+        }
     }
 
     buildTypes {

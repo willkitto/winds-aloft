@@ -44,6 +44,23 @@ Requires JDK 17+ and the Android SDK (API 36).
 ```
 Or open the folder in Android Studio.
 
+## Testing without a phone (and side by side)
+
+**Variants install side by side.** Building with `-Pvariant=<name>` gives the app its own id and name, for example *Winds Aloft (big-arrows)*. Several experiments can then be installed next to each other and the normal app:
+
+```bash
+./gradlew assembleRelease -Pvariant=big-arrows
+```
+
+**Every branch is built automatically.** `.github/workflows/build.yml` runs on each push. It builds the branch as a variant named after the branch, runs the tests, and renders UI screenshots. Download them from the run's *Artifacts*. To try an idea: make a branch, push, then install its APK next to the others.
+
+**Ways to run the APKs on a computer:**
+- **Desktop: Android Studio's emulator** (free, Windows/macOS/Linux). Install Android Studio, open *Device Manager* and create a Pixel device (any recent API level). Start it, then **drag an APK onto the emulator window** to install it. You can start a second device to compare two variants in separate windows, or install several variants on one device.
+- **Browser: [Appetize.io](https://appetize.io)**. Upload an APK and it runs in a browser tab with a shareable link. Upload each variant and open the tabs side by side. The free tier has limited minutes per month.
+- **Quick visual checks: screenshots.** `./gradlew testDebugUnitTest -Dscreenshot.dir=$PWD/screenshots` renders the real UI with synthetic data, with no device at all. CI does the same for every branch.
+
+Map tiles and live forecasts need network access in the emulator. Location can be set in the emulator's *Extended controls → Location*.
+
 ## Code map
 | Path | What |
 |---|---|
