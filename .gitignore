@@ -6,3 +6,4 @@ local.properties
 .kotlin/
 captures/
 *.apk
+__pycache__/
