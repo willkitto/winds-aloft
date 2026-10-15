@@ -184,7 +184,7 @@ const SNAP = window.WA_SNAPSHOT || null;
 
 // ======================================================================== design knobs
 const DEFAULT_DESIGN = {
-  layout: "stacked", glyph: "arrow", pointing: "downwind",
+  layout: "stacked", glyph: "arrow", pointing: "downwind", anchor: "tail", clouds: "labels",
   rowHeight: 38, lenScale: 1.25, minFrac: 0.5, fullKt: 40,
   strokeScale: 1, headScale: 1, halo: 1, staff: true, colGap: 8,
   colorMode: "auto", speedLabels: true, tempLabels: true, altLabels: true, labelScale: 1, gnd: true,
@@ -193,6 +193,7 @@ const DEFAULT_DESIGN = {
 const KNOBS = [
   { group: "Layout", key: "layout", label: "Layout", type: "select", options: [["stacked","Stacked columns"],["fan","Fan from pin"]] },
   { group: "Layout", key: "glyph", label: "Glyph", type: "select", options: [["arrow","Arrow"],["triangle","Triangle"],["barb","Wind barb"]] },
+  { group: "Layout", key: "anchor", label: "Arrow anchor", type: "select", options: [["tail","Windsock (tail on line)"],["center","Centred on line"]] },
   { group: "Layout", key: "pointing", label: "Arrows point", type: "select", options: [["downwind","Downwind (to)"],["upwind","Upwind (from)"]] },
   { group: "Layout", key: "rowHeight", label: "Row spacing", type: "range", min: 20, max: 80, step: 1, fmt: v => v + " dp" },
   { group: "Layout", key: "colGap", label: "Column gap", type: "range", min: 0, max: 40, step: 1, fmt: v => v + " dp" },
@@ -211,11 +212,13 @@ const KNOBS = [
   { group: "Colour & labels", key: "altLabels", label: "Altitude labels", type: "toggle" },
   { group: "Colour & labels", key: "gnd", label: "Ground line", type: "toggle" },
   { group: "Colour & labels", key: "labelScale", label: "Label size", type: "range", min: 0.6, max: 1.8, step: 0.05, fmt: v => "×" + v.toFixed(2) },
+  { group: "Map", key: "clouds", label: "Cloud layers", type: "select", options: [["labels","Bands + labels"],["bands","Bands only"],["off","Off"]] },
   { group: "Map", key: "mapFade", label: "Fade map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
   { group: "Map", key: "mapDarken", label: "Darken map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
 ];
 const EXAMPLES = [
-  { name: "Longer arrows (proposed)", design: {} },
+  { name: "Windsock + clouds (proposed)", design: {} },
+  { name: "Centred arrows (v0.4)", design: { anchor: "center", clouds: "bands" } },
   { name: "Coloured by temperature", design: { colorMode: "temperature", strokeScale: 1.3 } },
   { name: "Wind barbs", design: { glyph: "barb", minFrac: 1, lenScale: 1.1 } },
 ];
@@ -259,7 +262,46 @@ function parseForecast(entry) {
     }
     return out.sort((a, b) => a.h - b.h);
   });
-  return { elev, times: H.time, profiles };
+  const cloudLevels = LEVELS.map(([p]) => ({ gph: H[`geopotential_height_${p}hPa`], cc: H[`cloud_cover_${p}hPa`] })).filter(l => l.gph && l.cc);
+  const clouds = H.time.map((_, i) => cloudLevels
+    .map(l => ({ h: l.gph[i], cc: l.cc[i] }))
+    .filter(c => c.h != null && c.cc != null && c.h > elev)
+    .sort((a, b) => a.h - b.h));
+  return { elev, times: H.time, profiles, clouds };
+}
+/** Cloud cover (%) at a height, interpolated between pressure levels. */
+function cloudAt(levels, h) {
+  if (!levels.length) return null;
+  if (h <= levels[0].h) return levels[0].h - h <= 500 ? levels[0].cc : null;
+  for (let k = 1; k < levels.length; k++) if (levels[k].h >= h) {
+    const lo = levels[k - 1], hi = levels[k];
+    return lo.cc + (hi.cc - lo.cc) * (h - lo.h) / (hi.h - lo.h);
+  }
+  return null;
+}
+const CLOUD_MIN = 25;
+const CLOUD_ALPHA = { SCT: 0.32, BKN: 0.5, OVC: 0.66 };
+const cloudCat = cc => cc >= 87.5 ? "OVC" : cc >= 50 ? "BKN" : "SCT";
+/** Layers with at least 25% cover, scanned every 100 ft: [{base, top, max, cat}] in display feet. Null = model has no cloud data. */
+function cloudLayers(fp, epoch, ref, loFt, hiFt) {
+  const i = fp.times.indexOf(epoch);
+  if (i < 0 || !fp.clouds?.[i]?.length) return null;
+  const base0 = ref === "AGL" ? fp.elev : 0, out = []; let cur = null;
+  for (let ft = loFt; ft <= hiFt; ft += 100) {
+    const h = base0 + ft * M_PER_FT;
+    const cc = h < fp.elev ? null : cloudAt(fp.clouds[i], h);
+    if (cc != null && cc >= CLOUD_MIN) { if (!cur) cur = { base: ft, top: ft, max: cc }; else { cur.top = ft; cur.max = Math.max(cur.max, cc); } }
+    else if (cur) { out.push(cur); cur = null; }
+  }
+  if (cur) out.push(cur);
+  return out.map(L => ({ ...L, cat: cloudCat(L.max) }));
+}
+const fmtFt = ft => ft === 0 ? "SFC" : Math.round(ft / 100) * 100 >= 1000 ? (Math.round(ft / 100) / 10).toFixed(1).replace(/\.0$/, "") + "k" : String(Math.round(ft / 100) * 100);
+const fmtFtLong = ft => ft === 0 ? "SFC" : (Math.round(ft / 100) * 100).toLocaleString();
+function cloudSummary(layers, short) {
+  if (layers == null) return "no cloud data";
+  if (!layers.length) return "clear";
+  return layers.map(L => short ? `${L.cat} ${fmtFt(L.base)}–${fmtFt(L.top)}` : `${L.cat} ${fmtFtLong(L.base)}–${fmtFtLong(L.top)}`).join(short ? ", " : " · ");
 }
 function windsAt(fp, epoch, altsFt, ref) {
   const i = fp.times.indexOf(epoch);
@@ -314,7 +356,7 @@ async function detectLive() {
 function forecastUrl(lat, lon, model) {
   const vars = [];
   for (const [h, t] of SURFACE) vars.push(`wind_speed_${h}m`, `wind_direction_${h}m`, `temperature_${t}m`);
-  for (const [p] of LEVELS) vars.push(`wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`, `temperature_${p}hPa`);
+  for (const [p] of LEVELS) vars.push(`wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`, `temperature_${p}hPa`, `cloud_cover_${p}hPa`);
   return `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&hourly=${vars.join(",")}` +
     `&models=${model}&wind_speed_unit=ms&timeformat=unixtime&forecast_hours=72`;
 }
@@ -380,7 +422,7 @@ function tileImage(layer, z, x, y) {
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 function chromeBoxes(chrome) {
   const top = chrome === "none" ? 28 : 24 + 8 + 48 + 8;
-  const controlsH = 188, pinH = 62, tableH = 236;
+  const controlsH = 188, pinH = 80, tableH = 236;
   const bottom = chrome === "none" ? 20 : 8 + controlsH + 8 + pinH + (chrome === "table" ? tableH : 0) + 8;
   return { top, bottom, controlsH, pinH, tableH };
 }
@@ -390,6 +432,7 @@ function columnsFor(design) {
   return S.models.filter(m => S.forecasts[m]).map((m, slot) => ({
     label: comparing ? shortName(m) : null, model: m, slot: S.models.indexOf(m),
     winds: windsAt(S.forecasts[m], epoch, alts, S.ref),
+    clouds: cloudLayers(S.forecasts[m], epoch, S.ref, S.altLo * 1000, S.altHi * 1000),
   }));
 }
 function colourFor(design, w, col) {
@@ -447,54 +490,107 @@ function drawColumns(ctx, x, y, cols, d) {
   const cell = d.rowHeight;
   // Rows below the terrain (MSL altitudes under the ground) are left out, so the column starts at the pin.
   let skip = 0; while (skip < rows && !cols.some(c => c.winds[skip])) skip++;
+  if (skip >= rows) return;
   const rowY = i => y - cell * (i - skip + 0.5);
-  const textSize = clamp(cell * 0.36, 10, 15) * d.labelScale;
-  setText(ctx, textSize, "left");
-  const speedW = d.speedLabels ? ctx.measureText("888").width + 4 : 0;
-  setText(ctx, textSize * 0.88, "left");
-  const tempW = d.tempLabels ? ctx.measureText("-88°").width + 6 : 0;
-  setText(ctx, textSize, "right");
-  const altW = d.altLabels ? ctx.measureText("14k").width + 8 : 0;
-  const colW = cell + speedW + tempW + d.colGap;
-  const stroke = clamp(cell * 0.085, 2.4, 4.2) * d.strokeScale;
-  const groupW = cols.length * colW - d.colGap;
-  // One column sits on the pin; several are centred as a block (altitude labels included).
-  const firstCx = cols.length === 1 ? x : x + cell / 2 - (groupW - altW) / 2;
+  const alts = []; for (let k = S.altLo; k <= S.altHi; k++) alts.push(k * 1000);
+  const altY = ft => y - cell * ((ft - alts[skip]) / 1000 + 0.5);          // any altitude -> screen y
   const top = y - cell * (rows - skip);
+  const textSize = clamp(cell * 0.36, 10, 15) * d.labelScale, tempSize = textSize * 0.88;
+  const stroke = clamp(cell * 0.085, 2.4, 4.2) * d.strokeScale;
   const every = Math.max(1, Math.ceil(textSize * 1.15 / cell));
+  const windsock = d.anchor === "tail" && d.glyph !== "barb";
+  const measure = (s, size) => { setText(ctx, size, "left"); return ctx.measureText(s).width; };
+
+  // Pass 1: per row, the arrow's horizontal reach and which side its labels go (away from the arrow).
+  const geo = cols.map(col => {
+    const rowsG = col.winds.map((w, i) => {
+      if (!w) return null;
+      const kt = w.sp * KT_PER_MS, len = cell * d.lenScale * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt));
+      const a = (w.d + (d.pointing === "downwind" ? 180 : 0)) * Math.PI / 180, dx = Math.sin(a) * len;
+      const pad = stroke * 2 + 2;
+      const [x0, x1] = windsock ? [Math.min(0, dx) - pad, Math.max(0, dx) + pad] : [-Math.abs(dx) / 2 - pad, Math.abs(dx) / 2 + pad];
+      const labelled = i % every === 0;
+      const sw = d.speedLabels && labelled ? measure(fmtSpeed(w.sp), textSize) : 0;
+      const tw = d.tempLabels && labelled && w.t != null ? measure(fmtTemp(w.t), tempSize) + 4 : 0;
+      return { w, i, x0, x1, sw, tw, dx };
+    });
+    const live = rowsG.filter(Boolean);
+    // All of a column's labels go on one side: the side its arrows reach into least.
+    const reachR = live.reduce((t, r) => t + Math.max(0, r.dx), 0), reachL = live.reduce((t, r) => t + Math.max(0, -r.dx), 0);
+    const side = windsock && reachR > reachL ? "left" : "right";
+    live.forEach(r => r.side = side);
+    const rightLabelX = Math.max(4, ...live.filter(r => r.side === "right").map(r => r.x1)) + 4;
+    const leftLabelX = Math.min(-4, ...live.filter(r => r.side === "left").map(r => r.x0)) - 4;
+    const left = Math.max(cell / 2, ...live.map(r => -r.x0), ...live.filter(r => r.side === "left").map(r => -leftLabelX + r.sw + r.tw));
+    const right = Math.max(cell / 2, ...live.map(r => r.x1), ...live.filter(r => r.side === "right").map(r => rightLabelX + r.sw + r.tw));
+    return { col, rows: rowsG, left, right, leftLabelX, rightLabelX };
+  });
+
+  // Pass 2: place the columns side by side, packed by their actual width.
+  setText(ctx, textSize, "right");
+  const altW = d.altLabels ? ctx.measureText("14k").width + 12 : 0;
+  const cxs = []; let acc = 0;
+  geo.forEach((g, j) => { if (j) acc += geo[j - 1].right + d.colGap + g.left; cxs.push(acc); });
+  // One column sits on the pin; several are centred as a block (altitude labels included).
+  const blockL = -geo[0].left - altW, blockR = cxs[cxs.length - 1] + geo[geo.length - 1].right;
+  const shift = cols.length === 1 ? x : x - (blockL + blockR) / 2;
+  cxs.forEach((v, j) => cxs[j] = v + shift);
+  const singleRight = cxs[cxs.length - 1] + geo[geo.length - 1].right;
+
+  // Clouds behind everything: one band per layer per column, spanning its exact base and top.
+  if (d.clouds !== "off") geo.forEach((g, j) => {
+    for (const L of g.col.clouds || []) {
+      const yb = Math.min(y, altY(L.base)), yt = Math.max(top, altY(L.top + 100));
+      if (yb <= yt) continue;
+      const x0 = cxs[j] - g.left, x1 = cxs[j] + g.right;
+      ctx.fillStyle = `rgba(236,242,248,${CLOUD_ALPHA[L.cat]})`;
+      ctx.beginPath(); ctx.roundRect(x0, yt, x1 - x0, yb - yt, 6); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = 1.2; ctx.stroke();
+      if (d.clouds === "labels" && cols.length === 1) {
+        setText(ctx, textSize * 0.9, "left");
+        haloText(ctx, L.cat, singleRight + 8, (yb + yt) / 2 - 2, "#ffffff");
+        setText(ctx, textSize * 0.8, "left");
+        haloText(ctx, `${fmtFt(L.base)}–${fmtFt(L.top)}`, singleRight + 8, (yb + yt) / 2 + textSize * 0.85, "#e6eef5");
+      }
+    }
+  });
+
   ctx.lineCap = "round";
-  if (cols.length > 1 && d.staff) line(ctx, firstCx, y, firstCx + (cols.length - 1) * colW, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
-  cols.forEach((col, j) => {
-    const cx = firstCx + j * colW;
+  if (cols.length > 1 && d.staff) line(ctx, Math.min(cxs[0], x), y, Math.max(cxs[cxs.length - 1], x), y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
+  geo.forEach((g, j) => {
+    const cx = cxs[j], col = g.col;
     const staffColor = d.colorMode === "auto" && cols.length > 1 ? MODEL_COLORS[col.slot % 3] : "rgba(255,255,255,0.93)";
     if (d.staff) line(ctx, cx, y, cx, top, staffColor, 1.6, "rgba(0,0,0,0.55)", 4);
-    col.winds.forEach((w, i) => {
-      if (!w) return;
-      const cy = rowY(i), color = colourFor(d, w, col);
-      drawGlyph(ctx, cx, cy, w, cell, stroke, color, d, true);
-      if (i % every === 0) {
-        setText(ctx, textSize, "left");
-        if (d.speedLabels) haloText(ctx, fmtSpeed(w.sp), cx + cell / 2 + 3, cy + textSize * 0.36, "#ffffff");
-        if (d.tempLabels && w.t != null) {
-          setText(ctx, textSize * 0.88, "left");
-          haloText(ctx, fmtTemp(w.t), cx + cell / 2 + 3 + speedW + 2, cy + textSize * 0.36, d.colorMode === "temperature" ? "#ffffff" : tempLabelColor(w.t));
-        }
+    for (const r of g.rows) {
+      if (!r) continue;
+      const cy = rowY(r.i), w = r.w;
+      drawGlyph(ctx, cx, cy, w, cell, stroke, colourFor(d, w, col), d, true);
+      const ty = cy + textSize * 0.36, tempTint = d.colorMode === "temperature" ? "#ffffff" : tempLabelColor(w.t);
+      if (r.side === "right") {
+        let tx = cx + g.rightLabelX;
+        if (r.sw) { setText(ctx, textSize, "left"); haloText(ctx, fmtSpeed(w.sp), tx, ty, "#ffffff"); tx += r.sw + 4; }
+        if (r.tw) { setText(ctx, tempSize, "left"); haloText(ctx, fmtTemp(w.t), tx, ty, tempTint); }
+      } else {
+        let tx = cx + g.leftLabelX;
+        if (r.tw) { setText(ctx, tempSize, "right"); haloText(ctx, fmtTemp(w.t), tx, ty, tempTint); tx -= r.tw; }
+        if (r.sw) { setText(ctx, textSize, "right"); haloText(ctx, fmtSpeed(w.sp), tx, ty, "#ffffff"); }
       }
-    });
-    if (col.label) { setText(ctx, textSize, "center"); haloText(ctx, col.label, cx + (speedW + tempW) / 2, top - 6, MODEL_COLORS[col.slot % 3]); }
+    }
+    if (col.label) { setText(ctx, textSize, "center"); haloText(ctx, col.label, cx, top - 6, MODEL_COLORS[col.slot % 3]); }
   });
-  const altX = firstCx - cell / 2 - 5;
+
+  const altX = cxs[0] - geo[0].left - 8;
   if (d.altLabels) {
     setText(ctx, textSize, "right");
-    for (let i = 0; i < rows; i++) {
+    for (let i = skip; i < rows; i++) {
       if (i % every) continue;
       const w = cols.map(c => c.winds[i]).find(Boolean); if (!w) continue;
-      const a = w.alt; haloText(ctx, a === 0 ? "SFC" : a / 1000 + "k", altX, rowY(i) + textSize * 0.36, "#ffffff");
+      haloText(ctx, w.alt === 0 ? "SFC" : w.alt / 1000 + "k", altX, rowY(i) + textSize * 0.36, "#ffffff");
     }
   }
   if (d.gnd && skip > 0) {
     ctx.setLineDash([6, 4]);
-    line(ctx, firstCx - cell / 2, y, firstCx + (cols.length - 1) * colW + cell / 2 + speedW + tempW, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
+    line(ctx, cxs[0] - geo[0].left, y, cxs[cxs.length - 1] + geo[geo.length - 1].right, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
     ctx.setLineDash([]);
     setText(ctx, textSize, "right"); haloText(ctx, "GND", altX, y + textSize * 0.36, "#ffffff");
   }
@@ -516,7 +612,9 @@ function drawGlyph(ctx, cx, cy, w, size, stroke, color, d, stacked) {
   if (kt < 1) { ctx.strokeStyle = color; ctx.lineWidth = stroke * 0.8; ctx.beginPath(); ctx.arc(cx, cy, stacked ? size * 0.16 : 8, 0, 7); ctx.stroke(); return; }
   const len = stacked ? size * d.lenScale * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt)) : size;
   const a = (w.d + (d.pointing === "downwind" ? 180 : 0)) * Math.PI / 180, dx = Math.sin(a), dy = -Math.cos(a);
-  const sx = stacked ? cx - dx * len / 2 : cx, sy = stacked ? cy - dy * len / 2 : cy;
+  // Windsock: the tail (the end facing into the wind) sits on the column's centre line.
+  const centred = stacked && d.anchor !== "tail";
+  const sx = centred ? cx - dx * len / 2 : cx, sy = centred ? cy - dy * len / 2 : cy;
   const ex = sx + dx * len, ey = sy + dy * len;
   if (d.glyph === "triangle") {
     const hw = len * 0.22 * d.headScale;
@@ -592,6 +690,14 @@ function drawChrome(ctx, box, pane) {
   ctx.fillStyle = "#5a6470"; ctx.font = "12px system-ui, sans-serif";
   const sub = [S.elev != null ? `Elev ${Math.round(S.elev / M_PER_FT).toLocaleString()} ft` : null, S.models.length > 1 ? `${S.models.length} models` : shortName(S.models[0])].filter(Boolean).join(" · ");
   ctx.fillText(sub, 28, py + 46);
+  const epoch = S.baseEpoch + S.hour * 3600;
+  const cl = S.models.filter(m => S.forecasts[m]).map(m => {
+    const L = cloudLayers(S.forecasts[m], epoch, S.ref, 0, S.ceiling);
+    return (S.models.length > 1 ? shortName(m) + " " : "") + cloudSummary(L, S.models.length > 1);
+  }).join(" · ");
+  ctx.fillStyle = "#3b4a59"; ctx.font = "600 12px system-ui, sans-serif";
+  ctx.save(); ctx.beginPath(); ctx.rect(24, py + 52, PHONE_W - 80, 24); ctx.clip();
+  ctx.fillText("☁ " + cl, 28, py + 66); ctx.restore();
   ctx.strokeStyle = "#5a6470"; ctx.lineWidth = 2; ctx.beginPath();
   const ay = py + 31, up = S.chrome !== "table";
   ctx.moveTo(PHONE_W - 44, ay + (up ? 3 : -3)); ctx.lineTo(PHONE_W - 38, ay + (up ? -3 : 3)); ctx.lineTo(PHONE_W - 32, ay + (up ? 3 : -3)); ctx.stroke();
@@ -723,7 +829,7 @@ function exportPane(p) {
   const changed = Object.fromEntries(Object.entries(p.design).filter(([k, v]) => DEFAULT_DESIGN[k] !== v));
   return { name: p.name, changedFromApp: changed, design: p.design };
 }
-function savePanes() { store("panes-v2", panes.map(p => ({ name: p.name, design: p.design }))); }
+function savePanes() { store("panes-v3", panes.map(p => ({ name: p.name, design: p.design }))); }
 function copyText(text, msg) {
   navigator.clipboard?.writeText(text).then(() => toast(msg), () => showExport(text)) ?? showExport(text);
 }
@@ -834,7 +940,7 @@ async function search() {
   const g = load("global") || {};
   Object.assign(S, { models: g.models || S.models, hour: g.hour ?? S.hour, altLo: g.altLo ?? S.altLo, altHi: g.altHi ?? S.altHi, unit: g.unit || S.unit, tempUnit: g.tempUnit || S.tempUnit, panX: g.panX || 0, panY: g.panY || 0,
     ref: g.ref || S.ref, ceiling: g.ceiling || S.ceiling, layer: g.layer || S.layer, chrome: g.chrome || S.chrome });
-  const saved = load("panes-v2");
+  const saved = load("panes-v3");
   (saved?.length ? saved : EXAMPLES).forEach(x => addPane(x.name, x.design));
 
   S.live = await detectLive();

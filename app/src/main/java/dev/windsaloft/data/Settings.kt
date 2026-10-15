@@ -37,6 +37,7 @@ data class Settings(
     val arrowColor: ArrowColor = ArrowColor.AUTO,
     val tempUnit: TempUnit = TempUnit.C,
     val showTemperature: Boolean = true,
+    val showClouds: Boolean = true,
 ) {
     val primaryModelId: String get() = modelIds.first()
     val comparing: Boolean get() = modelIds.size > 1
@@ -67,6 +68,7 @@ class Prefs(context: Context) {
             arrowColor = enumOr(sp.getString("arrowColor", null), d.arrowColor),
             tempUnit = enumOr(sp.getString("tempUnit", null), d.tempUnit),
             showTemperature = sp.getBoolean("showTemp", d.showTemperature),
+            showClouds = sp.getBoolean("showClouds", d.showClouds),
         )
     }
 
@@ -80,6 +82,7 @@ class Prefs(context: Context) {
         .putString("arrowColor", s.arrowColor.name)
         .putString("tempUnit", s.tempUnit.name)
         .putBoolean("showTemp", s.showTemperature)
+        .putBoolean("showClouds", s.showClouds)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {

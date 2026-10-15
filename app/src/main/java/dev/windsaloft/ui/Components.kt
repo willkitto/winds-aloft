@@ -1,6 +1,7 @@
 package dev.windsaloft.ui
 
 import androidx.compose.foundation.Canvas
+import dev.windsaloft.wind.CloudLayer
 import dev.windsaloft.data.TempUnit
 import dev.windsaloft.data.ArrowColor
 import dev.windsaloft.wind.WindMath
@@ -337,7 +338,13 @@ private fun LegendArrow(color: Color, length: Dp, modifier: Modifier) {
 // ---------------------------------------------------------------- Pinned location profile
 
 /** One model's winds at the pinned location, one entry per selected altitude (low → high). */
-data class ModelProfile(val modelId: String, val color: Color, val winds: List<Pair<Int, Wind?>>)
+data class ModelProfile(
+    val modelId: String,
+    val color: Color,
+    val winds: List<Pair<Int, Wind?>>,
+    /** Cloud layers from the surface to the ceiling (null = the model has no cloud data). */
+    val clouds: List<CloudLayer>? = null,
+)
 
 @Composable
 fun PinPanel(
@@ -369,6 +376,20 @@ fun PinPanel(
                     if (state.pinFetchedAtMs > 0) add(Format.age(state.pinFetchedAtMs))
                 }.joinToString(" · ")
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                if (s.showClouds && profiles.isNotEmpty()) {
+                    // Exact layer bases and tops, readable even with the table closed.
+                    // One line per model when comparing.
+                    val clouds = profiles.joinToString("\n") { p ->
+                        (if (s.comparing) OpenMeteo.short(p.modelId) + ": " else "☁ ") + Format.clouds(p.clouds, short = s.comparing)
+                    }
+                    Text(
+                        clouds,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = profiles.size,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             if (state.pinLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             Icon(
@@ -582,6 +603,11 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                     }
                     FilterChip(settings.showTemperature, { onChange(settings.copy(showTemperature = !settings.showTemperature)) },
                         label = { Text("Show on map") })
+                }
+                Section("Cloud layers")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(settings.showClouds, { onChange(settings.copy(showClouds = !settings.showClouds)) },
+                        label = { Text("Show cloud bases & tops") })
                 }
                 Section("Arrow layout")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

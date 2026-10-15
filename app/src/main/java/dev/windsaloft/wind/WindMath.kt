@@ -18,6 +18,27 @@ data class Wind(val altitudeFt: Int, val dirFromDeg: Double, val speedMs: Double
 
 enum class AltitudeRef { MSL, AGL }
 
+/** Cloud cover (%) reported for a pressure level at a height above mean sea level. */
+data class CloudSample(val heightM: Double, val pct: Double)
+
+/** Aviation coverage categories (in eighths): scattered 3–4/8, broken 5–7/8, overcast 8/8. */
+enum class CloudCover {
+    SCT, BKN, OVC;
+
+    companion object {
+        fun of(pct: Double): CloudCover = when {
+            pct >= 87.5 -> OVC
+            pct >= 50.0 -> BKN
+            else -> SCT
+        }
+    }
+}
+
+/** A cloud layer between [baseFt] and [topFt] (in the display reference, MSL or AGL), at most [maxPct] cover. */
+data class CloudLayer(val baseFt: Int, val topFt: Int, val maxPct: Double) {
+    val cover: CloudCover get() = CloudCover.of(maxPct)
+}
+
 object WindMath {
     /** Largest gap between the ground and the lowest sample over which we extend the lowest sample down. */
     private const val SURFACE_CLAMP_M = 50.0
@@ -35,6 +56,24 @@ object WindMath {
         if (dir < 0) dir += 360.0
         if (dir >= 360.0) dir -= 360.0
         return speed to dir
+    }
+
+    /** Cover at least this (%) counts as a cloud layer. */
+    const val CLOUD_LAYER_MIN_PCT = 25.0
+
+    /** Cloud cover (%) at [heightM], interpolated between pressure levels sorted by height. */
+    fun cloudAt(levels: List<CloudSample>, heightM: Double): Double? {
+        if (levels.isEmpty()) return null
+        val first = levels.first()
+        if (heightM <= first.heightM) return if (first.heightM - heightM <= 500.0) first.pct else null
+        for (k in 1 until levels.size) {
+            val hi = levels[k]
+            if (hi.heightM >= heightM) {
+                val lo = levels[k - 1]
+                return lo.pct + (hi.pct - lo.pct) * (heightM - lo.heightM) / (hi.heightM - lo.heightM)
+            }
+        }
+        return null
     }
 
     /**
@@ -104,7 +143,36 @@ class ForecastPoint(
     val timesEpochSec: LongArray,
     /** Per hour, samples sorted by height MSL. */
     val profiles: List<List<RawSample>>,
+    /** Per hour, pressure-level cloud cover sorted by height (empty when the model has none). */
+    val clouds: List<List<CloudSample>> = emptyList(),
 ) {
+    /**
+     * Cloud layers between [loFt] and [hiFt] (display reference), found by scanning every 100 ft for
+     * at least [WindMath.CLOUD_LAYER_MIN_PCT] cover. Null when the model gives no cloud data.
+     */
+    fun cloudLayers(epochSec: Long, ref: AltitudeRef, loFt: Int, hiFt: Int): List<CloudLayer>? {
+        val i = hourIndex(epochSec)
+        val levels = clouds.getOrNull(i)
+        if (i < 0 || levels.isNullOrEmpty()) return null
+        val base = if (ref == AltitudeRef.AGL) elevationM else 0.0
+        val out = mutableListOf<CloudLayer>()
+        var start = -1
+        var last = -1
+        var max = 0.0
+        for (ft in loFt..hiFt step 100) {
+            val h = base + ft * M_PER_FT
+            val pct = if (h < elevationM) null else WindMath.cloudAt(levels, h)
+            if (pct != null && pct >= WindMath.CLOUD_LAYER_MIN_PCT) {
+                if (start < 0) { start = ft; max = pct } else max = maxOf(max, pct)
+                last = ft
+            } else if (start >= 0) {
+                out += CloudLayer(start, last, max); start = -1
+            }
+        }
+        if (start >= 0) out += CloudLayer(start, last, max)
+        return out
+    }
+
     val lastEpochSec: Long get() = timesEpochSec.lastOrNull() ?: 0L
 
     fun hourIndex(epochSec: Long): Int = java.util.Arrays.binarySearch(timesEpochSec, epochSec).let { if (it >= 0) it else -1 }

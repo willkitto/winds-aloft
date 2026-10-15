@@ -104,4 +104,28 @@ class WindMathTest {
         assertEquals(0.0, w.tempC!!, 1e-9)
         assertNull(WindMath.interpolate(listOf(RawSample(0.0, 1.0, 0.0, null), RawSample(100.0, 1.0, 0.0, null)), 50.0, 0.0)!!.tempC)
     }
+
+    @Test
+    fun cloudLayersFromPressureLevels() {
+        val ground = 1000.0
+        // 70 % cloud from ~2,400 to ~2,900 m MSL, 35 % around 3,900 m, clear elsewhere.
+        val levels = listOf(
+            CloudSample(1500.0, 0.0), CloudSample(2200.0, 10.0), CloudSample(2400.0, 70.0), CloudSample(2900.0, 65.0),
+            CloudSample(3100.0, 5.0), CloudSample(3700.0, 0.0), CloudSample(3900.0, 35.0), CloudSample(4100.0, 0.0),
+        )
+        val fp = ForecastPoint(LatLon(0.0, 0.0), ground, longArrayOf(0L), listOf(emptyList()), listOf(levels))
+        val layers = fp.cloudLayers(0L, AltitudeRef.MSL, 0, 18_000)!!
+        assertEquals(2, layers.size)
+        val bkn = layers[0]
+        assertEquals(CloudCover.BKN, bkn.cover)
+        // 25 % is crossed at 2,250 m (7,382 ft) and again at ~3,033 m (9,951 ft); layers snap to 100 ft steps.
+        assertEquals(7_400, bkn.baseFt)
+        assertEquals(9_900, bkn.topFt)
+        assertEquals(CloudCover.SCT, layers[1].cover)
+        // AGL shifts the same layer down by the ground elevation.
+        val agl = fp.cloudLayers(0L, AltitudeRef.AGL, 0, 18_000)!!
+        assertTrue(kotlin.math.abs((bkn.baseFt - agl[0].baseFt) - 3_281) <= 100)
+        // No cloud data at all -> null, not "clear".
+        assertNull(ForecastPoint(LatLon(0.0, 0.0), ground, longArrayOf(0L), listOf(emptyList())).cloudLayers(0L, AltitudeRef.MSL, 0, 18_000))
+    }
 }

@@ -34,6 +34,24 @@ object Format {
         return String.format(Locale.US, "%.4f°%s %.4f°%s", abs(p.lat), ns, abs(p.lon), ew)
     }
 
+    /** "BKN 4,300–7,800 · SCT 12,100–13,000" (or "BKN 4.3k–7.8k" when [short]). */
+    fun clouds(layers: List<dev.windsaloft.wind.CloudLayer>?, short: Boolean): String = when {
+        layers == null -> "no cloud data"
+        layers.isEmpty() -> "clear"
+        else -> layers.joinToString(if (short) ", " else " · ") { l ->
+            "${l.cover.name} ${cloudFt(l.baseFt, short)}–${cloudFt(l.topFt, short)}"
+        }
+    }
+
+    private fun cloudFt(ft: Int, short: Boolean): String {
+        val hundreds = Math.round(ft / 100.0).toInt()
+        return when {
+            ft == 0 -> "SFC"
+            short && hundreds >= 10 -> if (hundreds % 10 == 0) "${hundreds / 10}k" else "${hundreds / 10}.${hundreds % 10}k"
+            else -> feet(hundreds * 100)
+        }
+    }
+
     fun age(fetchedAtMs: Long): String {
         val min = ((System.currentTimeMillis() - fetchedAtMs) / 60_000L).coerceAtLeast(0)
         return when {

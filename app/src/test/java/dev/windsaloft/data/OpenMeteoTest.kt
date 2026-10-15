@@ -33,7 +33,8 @@ class OpenMeteoTest {
             "wind_speed_10m":[3.0,4.0],"wind_direction_10m":[180,190],
             "wind_speed_1000hPa":[9.0,9.0],"wind_direction_1000hPa":[90,90],"geopotential_height_1000hPa":[110,112],
             "wind_speed_850hPa":[8.0,null],"wind_direction_850hPa":[250,null],"geopotential_height_850hPa":[1450,1460],
-            "wind_speed_700hPa":[15.0,16.0],"wind_direction_700hPa":[270,275],"geopotential_height_700hPa":[3100,3110]}},
+            "wind_speed_700hPa":[15.0,16.0],"wind_direction_700hPa":[270,275],"geopotential_height_700hPa":[3100,3110],
+            "cloud_cover_850hPa":[90,90],"cloud_cover_700hPa":[60,null]}},
          {"latitude":41.0,"longitude":-104.0,"elevation":50.0,
           "hourly":{"time":[3600,7200],
             "wind_speed_10m":[2.0,2.0],"wind_direction_10m":[0,0],
@@ -56,6 +57,10 @@ class OpenMeteoTest {
         assertNull(msl[0])
         assertEquals(270.0, msl[1]!!.dirFromDeg, 15.0)
         assertEquals(3.0, first.windsAt(3600, listOf(0), AltitudeRef.AGL)[0]!!.speedMs, 1e-9)
+
+        // Cloud cover comes from levels above ground only: 850 hPa (1450 m) is under the 1600 m terrain.
+        assertEquals(listOf(3100.0 to 60.0), first.clouds[0].map { it.heightM to it.pct })
+        assertTrue(first.clouds[1].isEmpty())
 
         val second = pts[1]
         assertEquals(listOf(60.0, 110.0), second.profiles[0].map { it.heightM })

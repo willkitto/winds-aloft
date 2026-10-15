@@ -6,6 +6,8 @@ import android.graphics.Path
 import android.graphics.Point
 import dev.windsaloft.data.ArrowColor
 import dev.windsaloft.data.ArrowLayout
+import dev.windsaloft.wind.CloudCover
+import dev.windsaloft.wind.CloudLayer
 import dev.windsaloft.wind.KT_PER_MS
 import dev.windsaloft.wind.LatLon
 import dev.windsaloft.wind.Wind
@@ -16,16 +18,20 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** One forecast source's winds, one slot per selected altitude (low to high; null = no data). */
-data class WindColumn(val label: String?, val color: Int?, val winds: List<Wind?>)
+/**
+ * One forecast source's winds, one slot per selected altitude (low to high; null = no data), and the
+ * cloud layers within the shown altitudes (null = the model has no cloud data).
+ */
+data class WindColumn(val label: String?, val color: Int?, val winds: List<Wind?>, val clouds: List<CloudLayer>? = null)
 
 /**
  * Draws the winds for the pinned location. Arrows point DOWNWIND (the way the air is moving).
  *
  * Stacked: one vertical column per forecast source rising from the pin, one row per altitude
  * (lowest at the bottom), at a fixed spacing so the display never resizes; pan the map to see
- * parts under the panels. Each arrow is centred on its row and scaled by speed; the speed and
- * temperature are printed beside it.
+ * parts under the panels. Each arrow works like a windsock: its tail sits on the column's centre
+ * line and it streams downwind, longer for stronger wind. Speed and temperature are printed on the
+ * side the arrows reach least, and cloud layers are drawn as bands behind the rows.
  * Fan: all arrows share the pin as origin, with length proportional to speed.
  */
 class WindOverlay(private val density: Float) : Overlay() {
@@ -35,6 +41,7 @@ class WindOverlay(private val density: Float) : Overlay() {
     var layout: ArrowLayout = ArrowLayout.STACKED
     var colorMode: ArrowColor = ArrowColor.AUTO
     var showTemperature: Boolean = true
+    var showClouds: Boolean = true
     /** Speed text in the user's unit. */
     var speedLabel: (Double) -> String = { ms -> (ms * KT_PER_MS).toInt().toString() }
     /** Temperature text in the user's unit. */
@@ -62,6 +69,9 @@ class WindOverlay(private val density: Float) : Overlay() {
     private val ground = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; color = 0xFFFFFFFF.toInt()
     }
+    private val cloudFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFECF2F8.toInt() }
+    private val cloudStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0xF2FFFFFF.toInt() }
+    private val rect = android.graphics.RectF()
     private val path = Path()
     private val pt = Point()
 
@@ -82,6 +92,12 @@ class WindOverlay(private val density: Float) : Overlay() {
 
     // ---------------------------------------------------------------- Stacked columns
 
+    /** One row's arrow reach (relative to the column's centre line) and its label texts. */
+    private class RowGeo(val w: Wind, val i: Int, val x0: Float, val x1: Float, val dx: Float, val speed: String, val temp: String?, val sw: Float, val tw: Float)
+
+    /** A column's rows, how far it reaches left/right of its centre line, and where its labels start. */
+    private class ColGeo(val col: WindColumn, val rows: List<RowGeo>, val left: Float, val right: Float, val labelX: Float, val labelsLeft: Boolean)
+
     private fun drawColumns(c: Canvas, x: Float, y: Float) {
         val rows = columns.maxOf { it.winds.size }
         if (rows == 0) return
@@ -90,46 +106,98 @@ class WindOverlay(private val density: Float) : Overlay() {
         // Rows below the terrain (MSL altitudes under the ground) are left out, so the column starts at the pin.
         val skip = (0 until rows).firstOrNull { i -> columns.any { it.winds.getOrNull(i) != null } } ?: return
         fun rowY(i: Int) = y - cell * (i - skip + 0.5f)
+        val firstAlt = columns.firstNotNullOf { it.winds.getOrNull(skip) }.altitudeFt
+        fun altY(ft: Int) = y - cell * ((ft - firstAlt) / 1000f + 0.5f)
+        val top = y - cell * (rows - skip)
 
         val textSize = (cell * 0.36f).coerceIn(10f * density, 15f * density)
         val tempSize = textSize * 0.88f
         textHalo.strokeWidth = 3.5f * density
-        text.textSize = textSize
-        val speedWidth = text.measureText("888") + 4 * density
-        val altWidth = text.measureText("14k") + 8 * density
-        text.textSize = tempSize
-        val tempWidth = if (showTemperature) text.measureText("-88°") + 6 * density else 0f
-        val gap = 8 * density
-        val colWidth = cell + speedWidth + tempWidth + gap
         val stroke = (cell * 0.085f).coerceIn(2.4f * density, 4.2f * density)
+        val labelEvery = ceil(textSize * 1.15f / cell).toInt().coerceAtLeast(1)
+        val gap4 = 4 * density
+        fun width(s: String, size: Float): Float { text.textSize = size; return text.measureText(s) }
 
-        // One column sits on the pin; several are centred as a block (altitude labels included).
-        val groupWidth = columns.size * colWidth - gap
-        val firstCx = if (columns.size == 1) x else x + cell / 2 - (groupWidth - altWidth) / 2
-        val top = y - cell * (rows - skip)
+        // Pass 1: each arrow's reach. Windsock: the tail sits on the centre line and the arrow streams downwind.
+        val geos = columns.map { col ->
+            val rg = col.winds.mapIndexedNotNull { i, w ->
+                if (w == null) return@mapIndexedNotNull null
+                val len = cell * STACK_LENGTH * stackedFraction(w.speedMs * KT_PER_MS)
+                val dx = (sin(Math.toRadians(w.dirFromDeg + 180.0)) * len).toFloat()
+                val pad = stroke * 2 + 2 * density
+                val labelled = i % labelEvery == 0
+                val sp = speedLabel(w.speedMs)
+                val tp = if (showTemperature && w.tempC != null) tempLabel(w.tempC) else null
+                RowGeo(
+                    w, i, minOf(0f, dx) - pad, maxOf(0f, dx) + pad, dx, sp, tp,
+                    if (labelled) width(sp, textSize) else 0f,
+                    if (labelled && tp != null) width(tp, tempSize) + gap4 else 0f,
+                )
+            }
+            // All of a column's labels go on one side: the side its arrows reach into least.
+            val labelsLeft = rg.sumOf { maxOf(0f, it.dx).toDouble() } > rg.sumOf { maxOf(0f, -it.dx).toDouble() }
+            val labelW = rg.maxOfOrNull { it.sw + it.tw } ?: 0f
+            val labelX = if (labelsLeft) minOf(-gap4, rg.minOfOrNull { it.x0 } ?: 0f) - gap4
+            else maxOf(gap4, rg.maxOfOrNull { it.x1 } ?: 0f) + gap4
+            val left = maxOf(cell / 2, rg.maxOfOrNull { -it.x0 } ?: 0f, if (labelsLeft) -labelX + labelW else 0f)
+            val right = maxOf(cell / 2, rg.maxOfOrNull { it.x1 } ?: 0f, if (labelsLeft) 0f else labelX + labelW)
+            ColGeo(col, rg, left, right, labelX, labelsLeft)
+        }
 
-        if (columns.size > 1) {
+        // Pass 2: place columns side by side, packed by their actual width. One column sits on the pin;
+        // several are centred as a block (altitude labels included).
+        val altW = width("14k", textSize) + 12 * density
+        val gap = 8 * density
+        val cxs = FloatArray(geos.size)
+        for (j in 1 until geos.size) cxs[j] = cxs[j - 1] + geos[j - 1].right + gap + geos[j].left
+        val blockL = -geos.first().left - altW
+        val blockR = cxs.last() + geos.last().right
+        val shift = if (geos.size == 1) x else x - (blockL + blockR) / 2
+        for (j in cxs.indices) cxs[j] += shift
+        val blockRight = cxs.last() + geos.last().right
+
+        // Cloud layers behind everything: one band per layer per column, spanning its base and top.
+        if (showClouds) geos.forEachIndexed { j, g ->
+            for (layer in g.col.clouds.orEmpty()) {
+                val yb = minOf(y, altY(layer.baseFt))
+                val yt = maxOf(top, altY(layer.topFt + 100))
+                if (yb <= yt) continue
+                rect.set(cxs[j] - g.left, yt, cxs[j] + g.right, yb)
+                cloudFill.alpha = (CLOUD_ALPHA.getValue(layer.cover) * 255).toInt()
+                cloudStroke.strokeWidth = 1.2f * density
+                c.drawRoundRect(rect, 6 * density, 6 * density, cloudFill)
+                c.drawRoundRect(rect, 6 * density, 6 * density, cloudStroke)
+                if (geos.size == 1) {
+                    val mid = (yb + yt) / 2
+                    text.textSize = textSize * 0.9f; textHalo.textSize = textSize * 0.9f
+                    drawText(c, layer.cover.name, blockRight + 8 * density, mid - 2 * density, Paint.Align.LEFT, 0xFFFFFFFF.toInt())
+                    text.textSize = textSize * 0.8f; textHalo.textSize = textSize * 0.8f
+                    drawText(c, "${shortFt(layer.baseFt)}–${shortFt(layer.topFt)}", blockRight + 8 * density, mid + textSize * 0.85f, Paint.Align.LEFT, 0xFFE6EEF5.toInt())
+                }
+            }
+        }
+
+        if (geos.size > 1) {
             // Base bar tying the columns to the pin.
             staffHalo.strokeWidth = 4f * density
             staff.strokeWidth = 2f * density
             staff.color = 0xEEFFFFFF.toInt()
-            val lastCx = firstCx + (columns.size - 1) * colWidth
-            c.drawLine(minOf(firstCx, x), y, maxOf(lastCx, x), y, staffHalo)
-            c.drawLine(minOf(firstCx, x), y, maxOf(lastCx, x), y, staff)
+            c.drawLine(minOf(cxs.first(), x), y, maxOf(cxs.last(), x), y, staffHalo)
+            c.drawLine(minOf(cxs.first(), x), y, maxOf(cxs.last(), x), y, staff)
         }
 
-        val labelEvery = ceil(textSize * 1.15f / cell).toInt().coerceAtLeast(1)
-        columns.forEachIndexed { j, col ->
-            val cx = firstCx + j * colWidth
+        geos.forEachIndexed { j, g ->
+            val cx = cxs[j]
+            val col = g.col
             staffHalo.strokeWidth = 4f * density
             staff.strokeWidth = 1.6f * density
             staff.color = col.color ?: 0xEEFFFFFF.toInt()
             c.drawLine(cx, y, cx, top, staffHalo)
             c.drawLine(cx, y, cx, top, staff)
 
-            col.winds.forEachIndexed { i, w ->
-                if (w == null) return@forEachIndexed
-                val cy = rowY(i)
+            for (r in g.rows) {
+                val w = r.w
+                val cy = rowY(r.i)
                 val color = colorFor(w, col)
                 val kt = w.speedMs * KT_PER_MS
                 if (kt < 1.0) {
@@ -137,32 +205,40 @@ class WindOverlay(private val density: Float) : Overlay() {
                     c.drawCircle(cx, cy, cell * 0.16f, line)
                 } else {
                     val len = cell * STACK_LENGTH * stackedFraction(kt)
-                    // Centre the arrow on the cell: start half a length upwind of the centre.
-                    val a = Math.toRadians(w.dirFromDeg + 180.0)
-                    val sx = cx - sin(a).toFloat() * len / 2
-                    val sy = cy + cos(a).toFloat() * len / 2
-                    drawArrow(c, sx, sy, a, len, stroke, color)
+                    drawArrow(c, cx, cy, Math.toRadians(w.dirFromDeg + 180.0), len, stroke, color)
                 }
-                if (i % labelEvery == 0) {
-                    val ty = cy + textSize * 0.36f
+                if (r.sw == 0f && r.tw == 0f) continue
+                val ty = cy + textSize * 0.36f
+                val tint = if (colorMode == ArrowColor.TEMPERATURE || w.tempC == null) 0xFFFFFFFF.toInt() else temperatureTint(w.tempC)
+                if (!g.labelsLeft) {
+                    var tx = cx + g.labelX
                     text.textSize = textSize; textHalo.textSize = textSize
-                    drawText(c, speedLabel(w.speedMs), cx + cell / 2 + 3 * density, ty, Paint.Align.LEFT, 0xFFFFFFFF.toInt())
-                    if (showTemperature && w.tempC != null) {
+                    drawText(c, r.speed, tx, ty, Paint.Align.LEFT, 0xFFFFFFFF.toInt())
+                    tx += r.sw + gap4
+                    if (r.temp != null && r.tw > 0f) {
                         text.textSize = tempSize; textHalo.textSize = tempSize
-                        val tint = if (colorMode == ArrowColor.TEMPERATURE) 0xFFFFFFFF.toInt() else temperatureTint(w.tempC)
-                        drawText(c, tempLabel(w.tempC), cx + cell / 2 + 5 * density + speedWidth, ty, Paint.Align.LEFT, tint)
+                        drawText(c, r.temp, tx, ty, Paint.Align.LEFT, tint)
                     }
+                } else {
+                    var tx = cx + g.labelX
+                    if (r.temp != null && r.tw > 0f) {
+                        text.textSize = tempSize; textHalo.textSize = tempSize
+                        drawText(c, r.temp, tx, ty, Paint.Align.RIGHT, tint)
+                        tx -= r.tw
+                    }
+                    text.textSize = textSize; textHalo.textSize = textSize
+                    drawText(c, r.speed, tx, ty, Paint.Align.RIGHT, 0xFFFFFFFF.toInt())
                 }
             }
             if (col.label != null) {
                 text.textSize = textSize; textHalo.textSize = textSize
-                drawText(c, col.label, cx + (speedWidth + tempWidth) / 2, top - 6 * density, Paint.Align.CENTER, col.color ?: 0xFFFFFFFF.toInt())
+                drawText(c, col.label, cx, top - 6 * density, Paint.Align.CENTER, col.color ?: 0xFFFFFFFF.toInt())
             }
         }
 
         // Altitude labels down the left side.
         text.textSize = textSize; textHalo.textSize = textSize
-        val altX = firstCx - cell / 2 - 5 * density
+        val altX = cxs.first() - geos.first().left - 2 * gap4
         for (i in skip until rows) {
             if (i % labelEvery != 0) continue
             val alt = columns.firstNotNullOfOrNull { it.winds.getOrNull(i) }?.altitudeFt ?: continue
@@ -171,13 +247,22 @@ class WindOverlay(private val density: Float) : Overlay() {
         }
         // When MSL rows were dropped, the ground is at the pin: mark it.
         if (skip > 0) {
-            val x1 = firstCx + (columns.size - 1) * colWidth + cell / 2 + speedWidth + tempWidth
+            val x0 = cxs.first() - geos.first().left
             ground.pathEffect = android.graphics.DashPathEffect(floatArrayOf(6 * density, 4 * density), 0f)
             ground.strokeWidth = 2f * density
             staffHalo.strokeWidth = 4f * density
-            c.drawLine(firstCx - cell / 2, y, x1, y, staffHalo)
-            c.drawLine(firstCx - cell / 2, y, x1, y, ground)
+            c.drawLine(x0, y, blockRight, y, staffHalo)
+            c.drawLine(x0, y, blockRight, y, ground)
             drawText(c, "GND", altX, y + textSize * 0.36f, Paint.Align.RIGHT, 0xFFFFFFFF.toInt())
+        }
+    }
+
+    private fun shortFt(ft: Int): String {
+        val h = Math.round(ft / 100.0).toInt()
+        return when {
+            ft == 0 -> "SFC"
+            h >= 10 -> if (h % 10 == 0) "${h / 10}k" else "${h / 10}.${h % 10}k"
+            else -> "${h * 100}"
         }
     }
 
@@ -259,6 +344,9 @@ class WindOverlay(private val density: Float) : Overlay() {
     }
 
     companion object {
+        /** Cloud band opacity by coverage. */
+        private val CLOUD_ALPHA = mapOf(CloudCover.SCT to 0.32f, CloudCover.BKN to 0.5f, CloudCover.OVC to 0.66f)
+
         /** Row spacing of the stacked columns, in dp. */
         const val ROW_DP = 38f
 

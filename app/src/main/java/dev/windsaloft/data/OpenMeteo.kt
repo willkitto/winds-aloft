@@ -1,5 +1,6 @@
 package dev.windsaloft.data
 
+import dev.windsaloft.wind.CloudSample
 import dev.windsaloft.wind.ForecastPoint
 import dev.windsaloft.wind.LatLon
 import dev.windsaloft.wind.RawSample
@@ -71,6 +72,7 @@ object OpenMeteo {
             add("wind_speed_${p}hPa")
             add("wind_direction_${p}hPa")
             add("geopotential_height_${p}hPa")
+            add("cloud_cover_${p}hPa")
             if (includeTemperature) add("temperature_${p}hPa")
         }
     }
@@ -138,7 +140,19 @@ object OpenMeteo {
             samples.sortBy { it.heightM }
             samples
         }
-        return ForecastPoint(location, elevation, times, profiles)
+        val cloudLevels = PRESSURE_LEVELS.mapNotNull { (p, _) ->
+            val gph = series("geopotential_height_${p}hPa") ?: return@mapNotNull null
+            val cc = series("cloud_cover_${p}hPa") ?: return@mapNotNull null
+            gph to cc
+        }
+        val clouds = times.indices.map { t ->
+            cloudLevels.mapNotNull { (gph, cc) ->
+                val h = gph.getOrNull(t)?.takeUnless { it.isNaN() } ?: return@mapNotNull null
+                val pct = cc.getOrNull(t)?.takeUnless { it.isNaN() } ?: return@mapNotNull null
+                if (h > elevation) CloudSample(h, pct) else null
+            }.sortedBy { it.heightM }
+        }
+        return ForecastPoint(location, elevation, times, profiles, clouds)
     }
 
     private fun JsonObject.num(key: String): Double? = (this[key] as? JsonElement)?.jsonPrimitive?.doubleOrNull

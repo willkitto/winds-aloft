@@ -5,6 +5,7 @@ reach the network (e.g. as a claude.ai artifact). Writes playground/snapshot.js.
 
     python3 playground/tools/make_snapshot.py           # fresh snapshot
     python3 playground/tools/make_snapshot.py --merge   # keep what's there, fetch only what's missing
+    python3 playground/tools/make_snapshot.py --clouds  # add cloud cover to an existing snapshot
 
 Needs network access and Pillow (tiles are re-encoded as JPEG to keep the file small).
 """
@@ -39,7 +40,7 @@ def hourly_vars():
     for h, t in SURFACE:
         v += [f"wind_speed_{h}m", f"wind_direction_{h}m", f"temperature_{t}m"]
     for p in LEVELS:
-        v += [f"wind_speed_{p}hPa", f"wind_direction_{p}hPa", f"geopotential_height_{p}hPa", f"temperature_{p}hPa"]
+        v += [f"wind_speed_{p}hPa", f"wind_direction_{p}hPa", f"geopotential_height_{p}hPa", f"temperature_{p}hPa", f"cloud_cover_{p}hPa"]
     return v
 
 
@@ -95,7 +96,40 @@ def load_existing():
     return json.loads(text[text.index("=") + 1:].strip().rstrip(";"))
 
 
+def add_clouds():
+    """Fetches only per-level cloud cover and merges it into the existing snapshot by timestamp."""
+    snap = load_existing()
+    names = [f"cloud_cover_{p}hPa" for p in LEVELS]
+    for loc in snap["locations"]:
+        for model, fc in loc["forecasts"].items():
+            if any(n in fc["hourly"] for n in names):
+                continue
+            url = (f"https://api.open-meteo.com/v1/forecast?latitude={loc['lat']}&longitude={loc['lon']}"
+                   f"&hourly={','.join(names)}&models={model}&timeformat=unixtime&forecast_hours=96")
+            try:
+                d = json.loads(get(url))
+                if d.get("error"):
+                    raise RuntimeError(d.get("reason"))
+            except Exception as e:
+                print(f"{loc['id']} {model}: clouds skipped ({e})", file=sys.stderr)
+                continue
+            by_time = {t: i for i, t in enumerate(d["hourly"]["time"])}
+            got = 0
+            for n in names:
+                src = d["hourly"].get(n)
+                if not src or all(x is None for x in src):
+                    continue
+                fc["hourly"][n] = [src[by_time[t]] if t in by_time else None for t in fc["hourly"]["time"]]
+                got += 1
+            print(f"{loc['id']} {model}: clouds at {got} levels", file=sys.stderr)
+            write({**snap, "locations": []}, snap["locations"])
+            time.sleep(1)
+
+
 def main():
+    if "--clouds" in sys.argv:
+        add_clouds()
+        return
     merge = "--merge" in sys.argv and OUT.exists()
     old = {l["id"]: l for l in load_existing()["locations"]} if merge else {}
     snap = {"capturedAt": load_existing()["capturedAt"] if merge else int(time.time()), "zoom": ZOOM, "locations": []}

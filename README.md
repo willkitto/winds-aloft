@@ -2,11 +2,12 @@
 
 Upper-wind forecasts drawn on a map. The pinned location gets a column of arrows rising from it, one row per 1,000 ft altitude step, lowest at the bottom. When you compare forecast models, each model gets its own column.
 
-- **Direction**: arrows point **downwind** (the way the air is moving).
+- **Direction**: arrows act like windsocks. Each tail sits on the column's centre line and the arrow streams **downwind** (the way the air is moving).
 - **Speed**: a longer arrow means stronger wind, and the speed is printed beside each arrow, followed by the **temperature**.
 - **Altitude**: row position, labelled down the left side. Rows have a fixed spacing, so the display never shrinks when panels open; pan the map to see what's underneath, or hide all panels with one tap.
 - **Colour**: altitude by default, or the model when comparing. Settings can switch it to speed or temperature.
 - **Ground**: in MSL mode, altitudes below the terrain are left out, so the column starts at the pin, which is marked **GND**.
+- **Clouds**: cloud layers are drawn as bands behind the rows. Each band spans the layer's base and top to the nearest 100 ft and is shaded by coverage: SCT 25–50 %, BKN 50–87 %, OVC above that. The location panel lists them exactly, e.g. "BKN 7,400–9,600 · SCT 12,400–12,700", per model when comparing. Layers come from Open-Meteo's per-pressure-level cloud cover, interpolated to every 100 ft.
 
 | One model | Comparing three models |
 |---|---|

@@ -24,6 +24,7 @@ import dev.windsaloft.data.Camera
 import dev.windsaloft.data.Settings
 import dev.windsaloft.map.MapHandle
 import dev.windsaloft.map.attribution
+import dev.windsaloft.wind.CloudSample
 import dev.windsaloft.wind.ForecastPoint
 import dev.windsaloft.wind.LatLon
 import dev.windsaloft.wind.RawSample
@@ -60,7 +61,14 @@ class ScreenshotTest {
                 RawSample(height, 3.0 + i * 1.8 + skew, (205.0 + i * 7 + skew * 4 + h) % 360, 18.0 - i * 4.5)
             }
         }
-        return ForecastPoint(at, elevation, hours.toLongArray(), profiles)
+        // A broken layer around 7,500–9,500 ft MSL and a scattered one near 12,500 ft.
+        val clouds = hours.map {
+            listOf(
+                CloudSample(elevation + 300, 0.0), CloudSample(2200.0, 15.0), CloudSample(2350.0, 70.0), CloudSample(2850.0, 65.0),
+                CloudSample(3000.0, 5.0), CloudSample(3700.0, 0.0), CloudSample(3820.0, 40.0), CloudSample(3980.0, 0.0),
+            )
+        }
+        return ForecastPoint(at, elevation, hours.toLongArray(), profiles, clouds)
     }
 
     @Test
@@ -106,6 +114,7 @@ class ScreenshotTest {
                         map.windOverlay.speedLabel = { ms -> Format.speed(ms, settings.unit) }
                         map.windOverlay.tempLabel = { c -> settings.tempUnit.format(c) }
                         map.windOverlay.colorMode = settings.arrowColor
+                        map.windOverlay.showClouds = settings.showClouds
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
                     SearchBar(
