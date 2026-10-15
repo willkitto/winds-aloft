@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+<body>
+<!-- PAGE-START (everything between the markers is the claude.ai artifact page) -->
+<title>Winds Aloft Playground</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a briefing-board header of shared forecast controls, then a wrapping row of phone frames, each with its own design knobs. */
+:root {
+  --bg: #eef1f4;
+  --panel: #ffffff;
+  --ink: #15212e;
+  --muted: #5a6876;
+  --line: #d3dae1;
+  --accent: #0b6e8a;
+  --accent-ink: #ffffff;
+  --warn: #b5502a;
+  --phone: #0f1720;
+  --font-display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141a; --panel: #172029; --ink: #e4ebf1; --muted: #93a3b2; --line: #2a3743;
+    --accent: #43b3d1; --accent-ink: #06222b; --warn: #f08a5d; --phone: #05090d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141a; --panel: #172029; --ink: #e4ebf1; --muted: #93a3b2; --line: #2a3743;
+  --accent: #43b3d1; --accent-ink: #06222b; --warn: #f08a5d; --phone: #05090d; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 32px;
+}
+h1 { font: 700 26px/1.1 var(--font-display); letter-spacing: 0.01em; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 70ch; }
+.mode { display: inline-flex; gap: 6px; align-items: center; font: 600 12px var(--font-display); text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.mode b { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.mode.live b { background: #2fa46b; } .mode.snap b { background: var(--warn); }
+
+.top { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; justify-content: space-between; margin-bottom: 14px; }
+.board { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 20px; margin-bottom: 18px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field > span, .knob > span { font: 600 12px var(--font-display); text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+.val { font: 600 13px var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+select, input[type=text], button {
+  font: 14px var(--font-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 9px; min-width: 0;
+}
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px;
+  font: 600 13px var(--font-display); letter-spacing: 0.03em; cursor: pointer; user-select: none; background: var(--bg); }
+.chip input { margin: 0; accent-color: var(--accent); }
+.chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.chip[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.note { color: var(--muted); font-size: 13px; }
+
+.panes { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+.pane { width: min(400px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px; display: grid; gap: 10px; }
+.pane header { display: flex; gap: 6px; align-items: center; }
+.pane header input { flex: 1; font: 700 17px var(--font-display); background: transparent; border-color: transparent; padding: 4px 6px; }
+.pane header input:hover, .pane header input:focus { border-color: var(--line); }
+.phone { background: var(--phone); border-radius: 22px; padding: 8px; }
+.phone canvas { display: block; width: 100%; height: auto; border-radius: 15px; cursor: crosshair; touch-action: manipulation; }
+.knobs details { border-top: 1px solid var(--line); padding: 6px 2px; }
+.knobs summary { font: 700 14px var(--font-display); letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; padding: 2px 0; }
+.knobgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; padding-top: 8px; }
+.knob { display: grid; gap: 2px; min-width: 0; }
+.knob.wide { grid-column: 1 / -1; }
+.knob .head { display: flex; justify-content: space-between; gap: 8px; }
+.toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.on { opacity: 1; }
+textarea.export { width: 100%; height: 120px; font: 12px var(--font-mono); background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+
+<div class="top">
+  <div>
+    <h1>Winds Aloft Playground</h1>
+    <p class="sub">Try arrow designs side by side on the same forecast. Each frame is a phone screen with its own design settings; the forecast controls below apply to all of them.</p>
+  </div>
+  <span class="mode" id="mode"><b></b><span id="modeText">Starting…</span></span>
+</div>
+
+<section class="board" aria-label="Forecast controls">
+  <label class="field">
+    <span>Location</span>
+    <select id="loc"></select>
+    <div class="row" id="searchRow" hidden>
+      <input type="text" id="q" placeholder="Search a place or lat, lon" style="flex:1">
+      <button id="go" type="button">Go</button>
+    </div>
+    <span class="note" id="locNote"></span>
+  </label>
+  <div class="field">
+    <span>Forecast models (up to 3)</span>
+    <div class="row" id="models"></div>
+  </div>
+  <label class="field">
+    <span>Forecast time <span class="val" id="timeVal"></span></span>
+    <input type="range" id="hour" min="0" max="48" value="3">
+  </label>
+  <div class="field">
+    <span>Altitudes <span class="val" id="altVal"></span></span>
+    <input type="range" id="altLo" min="0" max="18" value="4" aria-label="Lowest altitude (thousands of feet)">
+    <input type="range" id="altHi" min="0" max="18" value="14" aria-label="Highest altitude (thousands of feet)">
+  </div>
+  <div class="field">
+    <span>Units &amp; reference</span>
+    <div class="row">
+      <select id="unit"><option value="kt">kt</option><option value="mph">mph</option><option value="kmh">km/h</option><option value="ms">m/s</option></select>
+      <select id="ref"><option value="MSL">MSL</option><option value="AGL">AGL</option></select>
+      <select id="ceiling"><option value="14000">14k ceiling</option><option value="18000" selected>18k ceiling</option><option value="24000">24k ceiling</option><option value="30000">30k ceiling</option></select>
+    </div>
+  </div>
+  <div class="field">
+    <span>Map &amp; app chrome</span>
+    <div class="row">
+      <select id="layer"><option value="topo">Topo</option><option value="streets">Streets</option><option value="satellite">Satellite</option></select>
+      <button type="button" id="zoomOut" aria-label="Zoom out">−</button>
+      <span class="val" id="zoomVal">z10</span>
+      <button type="button" id="zoomIn" aria-label="Zoom in">+</button>
+      <select id="chrome"><option value="collapsed">Panels: collapsed</option><option value="table">Panels: table open</option><option value="none">Panels: hidden</option></select>
+    </div>
+  </div>
+</section>
+
+<div class="actions" style="margin-bottom:12px">
+  <button type="button" class="primary" id="addPane">Add frame</button>
+  <button type="button" id="copyAll">Copy all designs</button>
+  <button type="button" id="resetAll">Reset to examples</button>
+</div>
+
+<div class="panes" id="panes"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="snapshot.js"></script>
+<script>
+"use strict";
+// ======================================================================== constants (mirror the app)
+const M_PER_FT = 0.3048, KT_PER_MS = 1.943844;
+const MODELS = [
+  { id: "best_match", short: "Best" }, { id: "ncep_gfs_seamless", short: "GFS" }, { id: "ncep_hrrr_conus", short: "HRRR" },
+  { id: "ecmwf_ifs025", short: "ECMWF" }, { id: "icon_seamless", short: "ICON" }, { id: "gem_seamless", short: "GEM" },
+  { id: "ukmo_seamless", short: "UKMO" },
+];
+const MODEL_COLORS = ["#22C3FF", "#FF4FA3", "#FFC21A"];
+const LEVELS = [[1000,364],[975,1060],[950,1773],[925,2500],[900,3243],[850,4781],[800,6394],[750,8091],[700,9882],[650,11780],[600,13801],[550,15962],[500,18289],[450,20812],[400,23574],[350,26631],[300,30065],[250,33999]];
+const SURFACE = [[10,2],[80,80],[120,120],[180,180]];
+const UNITS = { kt: { label: "kt", f: 1.943844 }, mph: { label: "mph", f: 2.236936 }, kmh: { label: "km/h", f: 3.6 }, ms: { label: "m/s", f: 1 } };
+const TILE_URLS = {
+  topo: (z, x, y) => `https://a.tile.opentopomap.org/${z}/${x}/${y}.png`,
+  streets: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+  satellite: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+};
+const ATTRIBUTION = { topo: "© OpenStreetMap, SRTM · OpenTopoMap", streets: "© OpenStreetMap contributors", satellite: "Imagery © Esri, Maxar" };
+const PHONE_W = 380, PHONE_H = 780;
+const SNAP = window.WA_SNAPSHOT || null;
+
+// ======================================================================== design knobs
+const DEFAULT_DESIGN = {
+  layout: "stacked", glyph: "arrow", pointing: "downwind",
+  fill: 0.88, cellMin: 16, cellMax: 56, minFrac: 0.45, fullKt: 40,
+  strokeScale: 1, headScale: 1, halo: 1, staff: true, colGap: 10,
+  colorMode: "auto", speedLabels: true, altLabels: true, labelScale: 1, gnd: true,
+  fanPxPerKt: 2.2, mapFade: 0, mapDarken: 0,
+};
+const KNOBS = [
+  { group: "Layout", key: "layout", label: "Layout", type: "select", options: [["stacked","Stacked columns"],["fan","Fan from pin"]] },
+  { group: "Layout", key: "glyph", label: "Glyph", type: "select", options: [["arrow","Arrow"],["triangle","Triangle"],["barb","Wind barb"]] },
+  { group: "Layout", key: "pointing", label: "Arrows point", type: "select", options: [["downwind","Downwind (to)"],["upwind","Upwind (from)"]] },
+  { group: "Layout", key: "fill", label: "Column height", type: "range", min: 0.4, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + "%" },
+  { group: "Layout", key: "cellMin", label: "Row min", type: "range", min: 8, max: 40, step: 1, fmt: v => v + " dp" },
+  { group: "Layout", key: "cellMax", label: "Row max", type: "range", min: 20, max: 90, step: 1, fmt: v => v + " dp" },
+  { group: "Layout", key: "colGap", label: "Column gap", type: "range", min: 0, max: 40, step: 1, fmt: v => v + " dp" },
+  { group: "Layout", key: "staff", label: "Staff line", type: "toggle" },
+  { group: "Arrows", key: "minFrac", label: "Calm size", type: "range", min: 0.1, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + "% of row" },
+  { group: "Arrows", key: "fullKt", label: "Full size at", type: "range", min: 10, max: 80, step: 1, fmt: v => v + " kt" },
+  { group: "Arrows", key: "strokeScale", label: "Line weight", type: "range", min: 0.4, max: 2.5, step: 0.05, fmt: v => "×" + v.toFixed(2) },
+  { group: "Arrows", key: "headScale", label: "Head size", type: "range", min: 0.4, max: 2, step: 0.05, fmt: v => "×" + v.toFixed(2) },
+  { group: "Arrows", key: "halo", label: "Dark outline", type: "range", min: 0, max: 1.5, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
+  { group: "Arrows", key: "fanPxPerKt", label: "Fan length / kt", type: "range", min: 0.5, max: 5, step: 0.1, fmt: v => v.toFixed(1) + " dp" },
+  { group: "Colour & labels", key: "colorMode", label: "Colour by", type: "select", wide: true,
+    options: [["auto","Auto (altitude; model when comparing)"],["altitude","Altitude"],["speed","Speed"],["model","Model"],["white","White"]] },
+  { group: "Colour & labels", key: "speedLabels", label: "Speed numbers", type: "toggle" },
+  { group: "Colour & labels", key: "altLabels", label: "Altitude labels", type: "toggle" },
+  { group: "Colour & labels", key: "gnd", label: "Ground line", type: "toggle" },
+  { group: "Colour & labels", key: "labelScale", label: "Label size", type: "range", min: 0.6, max: 1.8, step: 0.05, fmt: v => "×" + v.toFixed(2) },
+  { group: "Map", key: "mapFade", label: "Fade map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
+  { group: "Map", key: "mapDarken", label: "Darken map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
+];
+const EXAMPLES = [
+  { name: "App v0.3 (current)", design: {} },
+  { name: "Wind barbs", design: { glyph: "barb", speedLabels: true, minFrac: 1 } },
+  { name: "Bold, coloured by speed", design: { colorMode: "speed", strokeScale: 1.6, headScale: 1.2, minFrac: 0.6, cellMax: 64, mapFade: 0.25 } },
+];
+
+// ======================================================================== wind maths (port of WindMath.kt)
+function toUv(s, d) { const r = d * Math.PI / 180; return [-s * Math.sin(r), -s * Math.cos(r)]; }
+function fromUv(u, v) { let d = Math.atan2(-u, -v) * 180 / Math.PI; if (d < 0) d += 360; return [Math.hypot(u, v), d % 360]; }
+function interpolate(samples, target, ground) {
+  if (!samples.length || target < ground - 1) return null;
+  const first = samples[0];
+  if (target <= first.h) return first.h - ground <= 50 ? { ...first, h: target } : null;
+  if (target > samples[samples.length - 1].h) return null;
+  const i = samples.findIndex(s => s.h >= target), hi = samples[i], lo = samples[i - 1];
+  const span = hi.h - lo.h, t = span <= 0 ? 0 : (target - lo.h) / span;
+  const [u0, v0] = toUv(lo.sp, lo.d), [u1, v1] = toUv(hi.sp, hi.d);
+  const [sp, d] = fromUv(u0 + (u1 - u0) * t, v0 + (v1 - v0) * t);
+  const temp = lo.t != null && hi.t != null ? lo.t + (hi.t - lo.t) * t : null;
+  return { h: target, sp, d, t: temp };
+}
+function parseForecast(entry) {
+  const H = entry.hourly, elev = entry.elevation || 0, levels = [];
+  for (const [h, t] of SURFACE) levels.push({ fixed: elev + h, sp: H[`wind_speed_${h}m`], d: H[`wind_direction_${h}m`], t: H[`temperature_${t}m`] });
+  for (const [p] of LEVELS) levels.push({ gph: H[`geopotential_height_${p}hPa`], sp: H[`wind_speed_${p}hPa`], d: H[`wind_direction_${p}hPa`], t: H[`temperature_${p}hPa`] });
+  const profiles = H.time.map((_, i) => {
+    const out = [];
+    for (const l of levels) {
+      const sp = l.sp?.[i], d = l.d?.[i];
+      if (sp == null || d == null) continue;
+      let h;
+      if ("fixed" in l) h = l.fixed;
+      else { h = l.gph?.[i]; if (h == null || h <= elev + 10) continue; }
+      out.push({ h, sp, d, t: l.t?.[i] ?? null });
+    }
+    return out.sort((a, b) => a.h - b.h);
+  });
+  return { elev, times: H.time, profiles };
+}
+function windsAt(fp, epoch, altsFt, ref) {
+  const i = fp.times.indexOf(epoch);
+  return altsFt.map(ft => {
+    if (i < 0) return null;
+    const s = interpolate(fp.profiles[i], (ref === "AGL" ? fp.elev : 0) + ft * M_PER_FT, fp.elev);
+    return s ? { alt: ft, sp: s.sp, d: s.d } : null;
+  });
+}
+function maxVectorDifference(ws) {
+  if (ws.length < 2) return null;
+  const uv = ws.map(w => toUv(w.sp, w.d)); let m = 0;
+  for (let i = 0; i < uv.length; i++) for (let j = i + 1; j < uv.length; j++) m = Math.max(m, Math.hypot(uv[i][0] - uv[j][0], uv[i][1] - uv[j][1]));
+  return m;
+}
+
+// ======================================================================== colours
+function turbo(x) {
+  x = Math.min(1, Math.max(0, x));
+  const r = 0.13572138 + x * (4.61539260 + x * (-42.66032258 + x * (132.13108234 + x * (-152.94239396 + x * 59.28637943))));
+  const g = 0.09140261 + x * (2.19418839 + x * (4.84296658 + x * (-14.18503333 + x * (4.27729857 + x * 2.82956604))));
+  const b = 0.10667330 + x * (12.64194608 + x * (-60.58204836 + x * (110.36276771 + x * (-89.90310912 + x * 27.34824973))));
+  const c = v => Math.round(Math.min(1, Math.max(0, v)) * 255);
+  return `rgb(${c(r)},${c(g)},${c(b)})`;
+}
+const altitudeColor = (ft, ceiling) => turbo(0.1 + 0.85 * Math.min(1, Math.max(0, ft / ceiling)));
+const speedColor = kt => turbo(0.12 + 0.83 * Math.min(1, kt / 50));
+
+// ======================================================================== state
+const S = {
+  live: false, locations: [], locId: null, pin: null, pinName: "", elev: null,
+  models: ["ncep_gfs_seamless"], forecasts: {}, baseEpoch: 0, hour: 3,
+  altLo: 4, altHi: 14, unit: "kt", ref: "MSL", ceiling: 18000, layer: "topo", zoom: 10, chrome: "collapsed",
+};
+let panes = [];
+function store(key, val) { try { localStorage.setItem("wa-playground-" + key, JSON.stringify(val)); } catch (e) {} }
+function load(key) { try { const v = localStorage.getItem("wa-playground-" + key); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+
+// ======================================================================== data loading
+async function detectLive() {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch("https://api.open-meteo.com/v1/forecast?latitude=0&longitude=0&hourly=temperature_2m&forecast_hours=1", { signal: ctl.signal });
+    clearTimeout(t); return r.ok;
+  } catch (e) { return false; }
+}
+function forecastUrl(lat, lon, model) {
+  const vars = [];
+  for (const [h, t] of SURFACE) vars.push(`wind_speed_${h}m`, `wind_direction_${h}m`, `temperature_${t}m`);
+  for (const [p] of LEVELS) vars.push(`wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`, `temperature_${p}hPa`);
+  return `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&hourly=${vars.join(",")}` +
+    `&models=${model}&wind_speed_unit=ms&timeformat=unixtime&forecast_hours=72`;
+}
+const liveCache = new Map();
+async function loadForecasts() {
+  const want = S.models.slice();
+  if (!S.live) {
+    const loc = SNAP.locations.find(l => l.id === S.locId);
+    S.forecasts = {};
+    for (const m of want) if (loc.forecasts[m]) S.forecasts[m] = parseForecast(loc.forecasts[m]);
+    S.baseEpoch = Math.min(...Object.values(loc.forecasts).map(f => f.hourly.time[0]));
+    finishLoad(); return;
+  }
+  setModeText("Loading forecasts…");
+  const results = await Promise.all(want.map(async m => {
+    const key = `${S.pin.lat.toFixed(3)},${S.pin.lon.toFixed(3)},${m}`;
+    if (!liveCache.has(key)) {
+      liveCache.set(key, fetch(forecastUrl(S.pin.lat, S.pin.lon, m)).then(r => r.json()).then(d => {
+        if (d.error) throw new Error(d.reason); return parseForecast({ elevation: d.elevation, hourly: d.hourly });
+      }).catch(e => { liveCache.delete(key); toast(`${shortName(m)}: ${e.message}`); return null; }));
+    }
+    return [m, await liveCache.get(key)];
+  }));
+  S.forecasts = Object.fromEntries(results.filter(([, f]) => f));
+  S.baseEpoch = Math.floor(Date.now() / 3600000) * 3600;
+  finishLoad();
+}
+function finishLoad() {
+  const fps = Object.values(S.forecasts);
+  S.elev = fps.length ? fps[0].elev : null;
+  const last = fps.length ? Math.max(...fps.map(f => f.times[f.times.length - 1])) : S.baseEpoch + 72 * 3600;
+  const maxH = Math.max(1, Math.round((last - S.baseEpoch) / 3600));
+  el("hour").max = maxH; if (S.hour > maxH) S.hour = maxH;
+  setModeText(S.live ? "Live forecast" : "Snapshot " + fmtDate(SNAP.capturedAt));
+  syncControls(); renderAll();
+}
+
+// ======================================================================== map tiles
+const tileCache = new Map();
+function worldPx(lat, lon, z) {
+  const n = 256 * 2 ** z, s = Math.sin(lat * Math.PI / 180);
+  return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
+}
+function lonLatFromWorld(x, y, z) {
+  const n = 256 * 2 ** z, lon = x / n * 360 - 180;
+  const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+  return { lat, lon };
+}
+function tileImage(layer, z, x, y) {
+  const n = 2 ** z; x = ((x % n) + n) % n;
+  if (y < 0 || y >= n) return null;
+  const key = `${layer}/${z}/${x}/${y}`;
+  if (tileCache.has(key)) return tileCache.get(key);
+  let src = null;
+  if (!S.live) { const loc = SNAP.locations.find(l => l.id === S.locId); src = layer === "topo" ? loc?.tiles[`${z}/${x}/${y}`] : null; }
+  else src = TILE_URLS[layer](z, x, y);
+  if (!src) { tileCache.set(key, null); return null; }
+  const img = new Image(); img.crossOrigin = "anonymous"; img.onload = scheduleRender; img.onerror = () => tileCache.set(key, null);
+  img.src = src; tileCache.set(key, img); return img;
+}
+
+// ======================================================================== drawing (port of WindOverlay.kt)
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+function chromeBoxes(chrome) {
+  const top = chrome === "none" ? 28 : 24 + 8 + 48 + 8;
+  const controlsH = 188, pinH = 62, tableH = 236;
+  const bottom = chrome === "none" ? 20 : 8 + controlsH + 8 + pinH + (chrome === "table" ? tableH : 0) + 8;
+  return { top, bottom, controlsH, pinH, tableH };
+}
+function columnsFor(design) {
+  const alts = []; for (let k = S.altLo; k <= S.altHi; k++) alts.push(k * 1000);
+  const epoch = S.baseEpoch + S.hour * 3600, comparing = S.models.length > 1;
+  return S.models.filter(m => S.forecasts[m]).map((m, slot) => ({
+    label: comparing ? shortName(m) : null, model: m, slot: S.models.indexOf(m),
+    winds: windsAt(S.forecasts[m], epoch, alts, S.ref),
+  }));
+}
+function colourFor(design, w, col) {
+  const comparing = S.models.length > 1, kt = w.sp * KT_PER_MS;
+  switch (design.colorMode) {
+    case "altitude": return altitudeColor(w.alt, S.ceiling);
+    case "speed": return speedColor(kt);
+    case "model": return MODEL_COLORS[col.slot % 3];
+    case "white": return "#ffffff";
+    default: return comparing ? MODEL_COLORS[col.slot % 3] : altitudeColor(w.alt, S.ceiling);
+  }
+}
+function drawPane(pane) {
+  const cv = pane.canvas, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (cv.width !== PHONE_W * dpr) { cv.width = PHONE_W * dpr; cv.height = PHONE_H * dpr; }
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const d = pane.design, box = chromeBoxes(S.chrome);
+  const pinX = PHONE_W / 2, pinY = PHONE_H - box.bottom - 28;
+  pane.view = { pinX, pinY };
+  drawMap(ctx, pinX, pinY);
+  if (d.mapFade > 0) { ctx.fillStyle = `rgba(255,255,255,${d.mapFade})`; ctx.fillRect(0, 0, PHONE_W, PHONE_H); }
+  if (d.mapDarken > 0) { ctx.fillStyle = `rgba(0,0,0,${d.mapDarken})`; ctx.fillRect(0, 0, PHONE_W, PHONE_H); }
+  if (S.pin) {
+    const cols = columnsFor(d);
+    if (cols.length) {
+      if (d.layout === "fan") drawFan(ctx, pinX, pinY, cols, d);
+      else drawColumns(ctx, pinX, pinY, cols, d, PHONE_H - box.top - box.bottom);
+    }
+    drawPin(ctx, pinX, pinY);
+  }
+  if (S.chrome !== "none") drawChrome(ctx, box, pane);
+}
+function drawMap(ctx, pinX, pinY) {
+  ctx.fillStyle = "#dfe3e6"; ctx.fillRect(0, 0, PHONE_W, PHONE_H);
+  if (!S.pin) return;
+  const z = S.zoom, [px, py] = worldPx(S.pin.lat, S.pin.lon, z), ox = pinX - px, oy = pinY - py;
+  const x0 = Math.floor(-ox / 256), x1 = Math.floor((PHONE_W - ox) / 256), y0 = Math.floor(-oy / 256), y1 = Math.floor((PHONE_H - oy) / 256);
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+    const img = tileImage(S.layer, z, tx, ty);
+    if (img && img.complete && img.naturalWidth) ctx.drawImage(img, tx * 256 + ox, ty * 256 + oy, 256, 256);
+  }
+}
+function setText(ctx, size, align) { ctx.font = `700 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`; ctx.textAlign = align; ctx.textBaseline = "alphabetic"; }
+function haloText(ctx, s, x, y, color) {
+  ctx.lineJoin = "round"; ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(0,0,0,0.9)"; ctx.strokeText(s, x, y);
+  ctx.fillStyle = color; ctx.fillText(s, x, y);
+}
+function drawColumns(ctx, x, y, cols, d, visible) {
+  const rows = Math.max(...cols.map(c => c.winds.length)); if (!rows) return;
+  const labelRoom = cols.length > 1 ? 22 : 0;
+  const cell = clamp((visible * d.fill - labelRoom) / rows, d.cellMin, Math.max(d.cellMin, d.cellMax));
+  const textSize = clamp(cell * 0.42, 10, 15) * d.labelScale;
+  setText(ctx, textSize, "left");
+  const speedW = d.speedLabels ? ctx.measureText("888").width + 4 : 0;
+  const colW = cell + speedW + d.colGap;
+  const stroke = clamp(cell * 0.085, 2.4, 4.2) * d.strokeScale;
+  const groupW = cols.length * colW - d.colGap;
+  const firstCx = cols.length === 1 ? x : x - groupW / 2 + cell / 2;
+  const top = y - cell * rows;
+  const every = Math.max(1, Math.ceil(textSize * 1.15 / cell));
+  ctx.lineCap = "round";
+  if (cols.length > 1 && d.staff) line(ctx, firstCx, y, firstCx + (cols.length - 1) * colW, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
+  cols.forEach((col, j) => {
+    const cx = firstCx + j * colW;
+    const staffColor = d.colorMode === "auto" && cols.length > 1 ? MODEL_COLORS[col.slot % 3] : "rgba(255,255,255,0.93)";
+    if (d.staff) line(ctx, cx, y, cx, top, staffColor, 1.6, "rgba(0,0,0,0.55)", 4);
+    col.winds.forEach((w, i) => {
+      if (!w) return;
+      const cy = y - cell * (i + 0.5), color = colourFor(d, w, col);
+      drawGlyph(ctx, cx, cy, w, cell, stroke, color, d, true);
+      if (d.speedLabels && i % every === 0) {
+        setText(ctx, textSize, "left");
+        haloText(ctx, fmtSpeed(w.sp), cx + cell / 2 + 3, cy + textSize * 0.36, "#ffffff");
+      }
+    });
+    if (col.label) { setText(ctx, textSize, "center"); haloText(ctx, col.label, cx, top - 6, MODEL_COLORS[col.slot % 3]); }
+  });
+  const altX = firstCx - cell / 2 - 5;
+  if (d.altLabels) {
+    setText(ctx, textSize, "right");
+    for (let i = 0; i < rows; i++) {
+      if (i % every) continue;
+      const w = cols.map(c => c.winds[i]).find(Boolean); if (!w) continue;
+      const a = w.alt; haloText(ctx, a === 0 ? "SFC" : a / 1000 + "k", altX, y - cell * (i + 0.5) + textSize * 0.36, "#ffffff");
+    }
+  }
+  if (d.gnd) {
+    let firstData = -1;
+    for (let i = 0; i < rows; i++) if (cols.some(c => c.winds[i])) { firstData = i; break; }
+    if (firstData > 0) {
+      const gy = y - cell * firstData;
+      ctx.setLineDash([6, 4]);
+      line(ctx, firstCx - cell / 2, gy, firstCx + (cols.length - 1) * colW + cell / 2 + speedW, gy, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
+      ctx.setLineDash([]);
+      setText(ctx, textSize, "right"); haloText(ctx, "GND", altX, gy + textSize * 0.36, "#ffffff");
+    }
+  }
+}
+function drawFan(ctx, x, y, cols, d) {
+  const stroke = 3 * d.strokeScale;
+  for (const col of cols.slice().reverse())
+    for (const w of col.winds.filter(Boolean).sort((a, b) => b.alt - a.alt))
+      drawGlyph(ctx, x, y, w, Math.min(160, 12 + w.sp * KT_PER_MS * d.fanPxPerKt), stroke, colourFor(d, w, col), d, false);
+}
+function line(ctx, x0, y0, x1, y1, color, width, halo, haloW) {
+  if (halo) { ctx.strokeStyle = halo; ctx.lineWidth = haloW; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); }
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+}
+/** stacked: glyph centred on (cx, cy) and sized to `size` (the row). fan: glyph starts at (cx, cy), `size` long. */
+function drawGlyph(ctx, cx, cy, w, size, stroke, color, d, stacked) {
+  const kt = w.sp * KT_PER_MS, haloA = Math.min(1, 0.67 * d.halo), haloC = `rgba(0,0,0,${haloA})`;
+  if (d.glyph === "barb") return drawBarb(ctx, cx, cy, w, stacked ? size * 0.95 : 44, stroke, color, haloC, d, stacked);
+  if (kt < 1) { ctx.strokeStyle = color; ctx.lineWidth = stroke * 0.8; ctx.beginPath(); ctx.arc(cx, cy, stacked ? size * 0.16 : 8, 0, 7); ctx.stroke(); return; }
+  const len = stacked ? size * 0.95 * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt)) : size;
+  const a = (w.d + (d.pointing === "downwind" ? 180 : 0)) * Math.PI / 180, dx = Math.sin(a), dy = -Math.cos(a);
+  const sx = stacked ? cx - dx * len / 2 : cx, sy = stacked ? cy - dy * len / 2 : cy;
+  const ex = sx + dx * len, ey = sy + dy * len;
+  if (d.glyph === "triangle") {
+    const hw = len * 0.22 * d.headScale;
+    ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(sx - dy * hw, sy + dx * hw); ctx.lineTo(sx + dy * hw, sy - dx * hw); ctx.closePath();
+    if (haloA > 0) { ctx.lineJoin = "round"; ctx.lineWidth = 2.2 * d.halo; ctx.strokeStyle = haloC; ctx.stroke(); }
+    ctx.fillStyle = color; ctx.fill(); return;
+  }
+  const head = Math.min(stroke * 3 * d.headScale, len * 0.5), bx = ex - dx * head, by = ey - dy * head;
+  ctx.lineCap = "round";
+  if (haloA > 0) line(ctx, sx, sy, bx, by, color, stroke, haloC, stroke + 2.4 * d.halo); else line(ctx, sx, sy, bx, by, color, stroke);
+  const hw = head * 0.62;
+  ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(bx - dy * hw, by + dx * hw); ctx.lineTo(bx + dy * hw, by - dx * hw); ctx.closePath();
+  if (haloA > 0) { ctx.lineJoin = "round"; ctx.lineWidth = 1.8 * d.halo; ctx.strokeStyle = haloC; ctx.stroke(); }
+  ctx.fillStyle = color; ctx.fill();
+}
+/** Standard wind barb: staff points into the wind; 50 kt pennants, 10 kt barbs, 5 kt half-barbs. */
+function drawBarb(ctx, cx, cy, w, len, stroke, color, haloC, d, stacked) {
+  const kt = Math.round(w.sp * KT_PER_MS / 5) * 5;
+  if (kt < 5) { ctx.strokeStyle = color; ctx.lineWidth = stroke * 0.8; ctx.beginPath(); ctx.arc(cx, cy, len * 0.18, 0, 7); ctx.stroke(); return; }
+  const a = w.d * Math.PI / 180, dx = Math.sin(a), dy = -Math.cos(a);            // toward where the wind comes from
+  const sx = stacked ? cx - dx * len / 2 : cx, sy = stacked ? cy - dy * len / 2 : cy;
+  const ex = sx + dx * len, ey = sy + dy * len;
+  const px = -dy, py = dx;                                                        // feathers on the clockwise side
+  const fl = len * 0.42 * d.headScale, step = len * 0.15;
+  const segs = []; let rest = kt, pos = 0;
+  const shapes = [];
+  while (rest >= 50) { shapes.push({ type: "pennant", pos }); pos += step * 1.3; rest -= 50; }
+  while (rest >= 10) { shapes.push({ type: "barb", pos }); pos += step; rest -= 10; }
+  if (rest >= 5) { if (pos === 0) pos = step; shapes.push({ type: "half", pos }); }
+  const sw = Math.max(1.6, stroke * 0.7);
+  const paint = (strokeStyle, width) => {
+    ctx.strokeStyle = strokeStyle; ctx.lineWidth = width; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+    for (const s of shapes) {
+      const bx = ex - dx * s.pos, by = ey - dy * s.pos;
+      const l = s.type === "half" ? fl * 0.55 : fl;
+      ctx.moveTo(bx, by); ctx.lineTo(bx + px * l + dx * l * 0.35, by + py * l + dy * l * 0.35);
+    }
+    ctx.stroke();
+  };
+  if (haloC) paint(haloC, sw + 2.4 * d.halo);
+  paint(color, sw);
+  ctx.fillStyle = color;
+  for (const s of shapes.filter(s => s.type === "pennant")) {
+    const bx = ex - dx * s.pos, by = ey - dy * s.pos, b2x = bx - dx * step * 1.1, b2y = by - dy * step * 1.1;
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + px * fl, by + py * fl); ctx.lineTo(b2x, b2y); ctx.closePath(); ctx.fill();
+  }
+}
+function drawPin(ctx, x, y) {
+  ctx.fillStyle = "#fff"; ctx.strokeStyle = "#202020"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = "#E53935"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.stroke();
+}
+/** Simplified app chrome (search bar, pin panel, controls) so the free map area matches the phone. */
+function drawChrome(ctx, box, pane) {
+  const card = (x, y, w, h, r) => { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill(); };
+  ctx.fillStyle = "rgba(0,0,0,0.18)"; ctx.fillRect(0, 0, PHONE_W, 24);
+  ctx.fillStyle = "rgba(247,248,250,0.96)"; card(12, 32, PHONE_W - 24, 48, 24);
+  setText(ctx, 15, "left"); ctx.fillStyle = "#5a6470"; ctx.font = "15px system-ui, sans-serif"; ctx.fillText("Search place or lat, lon", 48, 61);
+  ctx.strokeStyle = "#5a6470"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(28, 54, 6, 0, 7); ctx.moveTo(32.5, 58.5); ctx.lineTo(37, 63); ctx.stroke();
+  const cy = PHONE_H - 8 - box.controlsH;
+  ctx.fillStyle = "rgba(247,248,250,0.96)"; card(12, cy, PHONE_W - 24, box.controlsH, 20);
+  ctx.fillStyle = "#1c2733"; ctx.font = "600 13px system-ui, sans-serif";
+  ctx.fillText("Forecast", 28, cy + 26); ctx.textAlign = "right"; ctx.fillText(fmtTime(S.baseEpoch + S.hour * 3600) + `  (+${S.hour} h)`, PHONE_W - 28, cy + 26);
+  ctx.textAlign = "left"; ctx.fillText("Altitude", 28, cy + 84); ctx.textAlign = "right"; ctx.fillText(`${(S.altLo * 1000).toLocaleString()} – ${(S.altHi * 1000).toLocaleString()} ft ${S.ref}`, PHONE_W - 28, cy + 84);
+  ctx.fillStyle = "#c9d0d8"; card(28, cy + 42, PHONE_W - 56, 12, 6); card(28, cy + 100, PHONE_W - 56, 12, 6);
+  ctx.fillStyle = "#2c4a7a"; const hx = 28 + (PHONE_W - 56) * S.hour / Math.max(1, +el("hour").max); card(hx - 3, cy + 36, 6, 24, 3);
+  ctx.textAlign = "left"; ctx.fillStyle = "#5a6470"; ctx.font = "11px system-ui, sans-serif"; ctx.fillText(ATTRIBUTION[S.layer] + " · Open-Meteo", 28, cy + box.controlsH - 16);
+  const py = cy - 8 - box.pinH - (S.chrome === "table" ? box.tableH : 0);
+  const ph = box.pinH + (S.chrome === "table" ? box.tableH : 0);
+  ctx.fillStyle = "rgba(247,248,250,0.96)"; card(12, py, PHONE_W - 24, ph, 20);
+  ctx.fillStyle = "#15212e"; ctx.font = "600 15px system-ui, sans-serif"; ctx.fillText(S.pinName || coordText(S.pin), 28, py + 26);
+  ctx.fillStyle = "#5a6470"; ctx.font = "12px system-ui, sans-serif";
+  const sub = [S.elev != null ? `Elev ${Math.round(S.elev / M_PER_FT).toLocaleString()} ft` : null, S.models.length > 1 ? `${S.models.length} models` : shortName(S.models[0])].filter(Boolean).join(" · ");
+  ctx.fillText(sub, 28, py + 46);
+  if (S.chrome === "table") drawTable(ctx, 24, py + box.pinH, PHONE_W - 48, box.tableH - 8);
+}
+function drawTable(ctx, x, y, w, h) {
+  const cols = columnsFor({}), alts = []; for (let k = S.altHi; k >= S.altLo; k--) alts.push(k);
+  ctx.strokeStyle = "#d3dae1"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x - 12, y); ctx.lineTo(x + w + 12, y); ctx.stroke();
+  ctx.font = "600 11px system-ui, sans-serif"; ctx.fillStyle = "#5a6470"; ctx.textAlign = "left";
+  const colX = i => x + 54 + i * ((w - 54 - 34) / Math.max(1, cols.length));
+  ctx.fillText("Alt", x, y + 18); cols.forEach((c, i) => ctx.fillText(shortName(c.model), colX(i), y + 18));
+  if (cols.length > 1) ctx.fillText("Δ", x + w - 26, y + 18);
+  ctx.font = "12px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#15212e";
+  alts.slice(0, Math.floor((h - 26) / 19)).forEach((k, r) => {
+    const yy = y + 38 + r * 19, idx = k - S.altLo;
+    ctx.fillText((k * 1000).toLocaleString(), x, yy);
+    const ws = cols.map(c => c.winds[idx]);
+    ws.forEach((wd, i) => ctx.fillText(wd ? `${String(Math.round(wd.d)).padStart(3, "0")}° ${fmtSpeed(wd.sp)}` : "—", colX(i), yy));
+    const sp = maxVectorDifference(ws.filter(Boolean));
+    if (sp != null) ctx.fillText(fmtSpeed(sp), x + w - 26, yy);
+  });
+}
+
+// ======================================================================== rendering loop
+let pending = false;
+function scheduleRender() { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; renderAll(); }); } }
+function renderAll() { for (const p of panes) drawPane(p); }
+
+// ======================================================================== formatting
+const el = id => document.getElementById(id);
+const shortName = id => MODELS.find(m => m.id === id)?.short || id;
+const fmtSpeed = ms => String(Math.round(ms * UNITS[S.unit].f));
+const coordText = p => p ? `${Math.abs(p.lat).toFixed(3)}°${p.lat >= 0 ? "N" : "S"} ${Math.abs(p.lon).toFixed(3)}°${p.lon >= 0 ? "E" : "W"}` : "";
+function fmtTime(epoch) {
+  const dt = new Date(epoch * 1000);
+  const local = dt.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${local} · ${String(dt.getUTCHours()).padStart(2, "0")}00Z`;
+}
+const fmtDate = epoch => new Date(epoch * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+function setModeText(t) { el("modeText").textContent = t; el("mode").className = "mode " + (S.live ? "live" : "snap"); }
+let toastTimer;
+function toast(msg) { const t = el("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 2200); }
+
+// ======================================================================== panes UI
+let nextId = 1;
+function makePane(name, design) {
+  const pane = { id: nextId++, name, design: { ...DEFAULT_DESIGN, ...design } };
+  const art = document.createElement("article"); art.className = "pane";
+  art.innerHTML = `
+    <header>
+      <input type="text" aria-label="Design name" id="name-${pane.id}">
+      <button type="button" data-act="dup" title="Duplicate this design">Duplicate</button>
+      <button type="button" data-act="del" title="Remove this frame" aria-label="Remove">✕</button>
+    </header>
+    <div class="phone"><canvas width="${PHONE_W}" height="${PHONE_H}" aria-label="Phone preview"></canvas></div>
+    <div class="knobs"></div>
+    <div class="actions"><button type="button" data-act="copy">Copy design</button><button type="button" data-act="reset">Reset</button></div>`;
+  pane.el = art; pane.canvas = art.querySelector("canvas");
+  const nameInput = art.querySelector("input"); nameInput.value = name;
+  nameInput.addEventListener("input", () => { pane.name = nameInput.value; savePanes(); });
+  art.querySelector("[data-act=dup]").onclick = () => { addPane(pane.name + " copy", { ...pane.design }, pane); };
+  art.querySelector("[data-act=del]").onclick = () => { if (panes.length > 1) { panes = panes.filter(p => p !== pane); art.remove(); savePanes(); } else toast("Keep at least one frame"); };
+  art.querySelector("[data-act=copy]").onclick = () => copyText(JSON.stringify(exportPane(pane), null, 2), "Design copied");
+  art.querySelector("[data-act=reset]").onclick = () => { pane.design = { ...DEFAULT_DESIGN }; buildKnobs(pane); savePanes(); scheduleRender(); };
+  pane.canvas.addEventListener("click", e => onMapClick(pane, e));
+  buildKnobs(pane);
+  return pane;
+}
+function buildKnobs(pane) {
+  const host = pane.el.querySelector(".knobs"); host.innerHTML = "";
+  const groups = [...new Set(KNOBS.map(k => k.group))];
+  groups.forEach((g, gi) => {
+    const det = document.createElement("details"); if (gi === 0) det.open = true;
+    det.innerHTML = `<summary>${g}</summary><div class="knobgrid"></div>`;
+    const grid = det.querySelector(".knobgrid");
+    for (const k of KNOBS.filter(k => k.group === g)) {
+      const id = `k-${pane.id}-${k.key}`, v = pane.design[k.key];
+      const w = document.createElement(k.type === "toggle" ? "label" : "div");
+      w.className = "knob" + (k.wide ? " wide" : "");
+      if (k.type === "toggle") {
+        w.className += " toggle"; w.innerHTML = `<input type="checkbox" id="${id}"> ${k.label}`;
+        const inp = w.querySelector("input"); inp.checked = !!v;
+        inp.onchange = () => setKnob(pane, k.key, inp.checked);
+      } else if (k.type === "select") {
+        w.innerHTML = `<span><label for="${id}">${k.label}</label></span><select id="${id}">${k.options.map(([val, l]) => `<option value="${val}">${l}</option>`).join("")}</select>`;
+        const s = w.querySelector("select"); s.value = v; s.onchange = () => setKnob(pane, k.key, s.value);
+      } else {
+        w.innerHTML = `<div class="head"><span><label for="${id}">${k.label}</label></span><span class="val"></span></div><input type="range" id="${id}" min="${k.min}" max="${k.max}" step="${k.step}">`;
+        const r = w.querySelector("input"), out = w.querySelector(".val");
+        r.value = v; out.textContent = k.fmt(+v);
+        r.oninput = () => { out.textContent = k.fmt(+r.value); setKnob(pane, k.key, +r.value); };
+      }
+      grid.appendChild(w);
+    }
+    host.appendChild(det);
+  });
+}
+function setKnob(pane, key, value) { pane.design[key] = value; savePanes(); scheduleRender(); }
+function addPane(name, design, after) {
+  const p = makePane(name, design);
+  if (after) { panes.splice(panes.indexOf(after) + 1, 0, p); after.el.after(p.el); }
+  else { panes.push(p); el("panes").appendChild(p.el); }
+  savePanes(); scheduleRender(); return p;
+}
+function exportPane(p) {
+  const changed = Object.fromEntries(Object.entries(p.design).filter(([k, v]) => DEFAULT_DESIGN[k] !== v));
+  return { name: p.name, changedFromApp: changed, design: p.design };
+}
+function savePanes() { store("panes", panes.map(p => ({ name: p.name, design: p.design }))); }
+function copyText(text, msg) {
+  navigator.clipboard?.writeText(text).then(() => toast(msg), () => showExport(text)) ?? showExport(text);
+}
+function showExport(text) {
+  let ta = document.querySelector("textarea.export");
+  if (!ta) { ta = document.createElement("textarea"); ta.className = "export"; ta.readOnly = true; ta.setAttribute("aria-label", "Exported designs"); el("panes").before(ta); }
+  ta.value = text; ta.focus(); ta.select(); toast("Select and copy the text above");
+}
+function onMapClick(pane, e) {
+  if (!S.live) { toast("Snapshot mode: pick one of the sample locations above"); return; }
+  const r = pane.canvas.getBoundingClientRect(), sx = (e.clientX - r.left) * PHONE_W / r.width, sy = (e.clientY - r.top) * PHONE_H / r.height;
+  const [px, py] = worldPx(S.pin.lat, S.pin.lon, S.zoom);
+  const p = lonLatFromWorld(px + sx - pane.view.pinX, py + sy - pane.view.pinY, S.zoom);
+  setPin(p.lat, p.lon, "");
+}
+
+// ======================================================================== global controls
+function syncControls() {
+  el("hour").value = S.hour; el("altLo").value = S.altLo; el("altHi").value = S.altHi;
+  el("altLo").max = el("altHi").max = S.ceiling / 1000;
+  el("timeVal").textContent = fmtTime(S.baseEpoch + S.hour * 3600) + ` (+${S.hour} h)`;
+  el("altVal").textContent = `${(S.altLo * 1000).toLocaleString()}–${(S.altHi * 1000).toLocaleString()} ft ${S.ref}`;
+  el("unit").value = S.unit; el("ref").value = S.ref; el("ceiling").value = S.ceiling; el("layer").value = S.layer; el("chrome").value = S.chrome;
+  el("zoomVal").textContent = "z" + S.zoom;
+  el("zoomIn").disabled = el("zoomOut").disabled = el("layer").disabled = !S.live;
+  const host = el("models"); host.innerHTML = "";
+  const available = S.live ? MODELS.map(m => m.id) : Object.keys(SNAP.locations.find(l => l.id === S.locId).forecasts);
+  for (const m of MODELS) {
+    const on = S.models.includes(m.id), slot = S.models.indexOf(m.id);
+    const ok = available.includes(m.id) && (on || S.models.length < 3);
+    const lab = document.createElement("label"); lab.className = "chip"; lab.setAttribute("aria-disabled", String(!ok));
+    lab.innerHTML = `<input type="checkbox" ${on ? "checked" : ""} ${ok ? "" : "disabled"}>${on && S.models.length > 1 ? `<i style="background:${MODEL_COLORS[slot]}"></i>` : ""}${m.short}`;
+    lab.querySelector("input").onchange = ev => {
+      if (ev.target.checked) S.models.push(m.id);
+      else if (S.models.length > 1) S.models = S.models.filter(x => x !== m.id);
+      else ev.target.checked = true;
+      saveGlobal(); loadForecasts();
+    };
+    host.appendChild(lab);
+  }
+  el("locNote").textContent = S.live ? "Tap a frame's map to move the pin." : "Snapshot data: sample locations only. Open the playground from the repo for live forecasts anywhere.";
+}
+function saveGlobal() { store("global", { models: S.models, hour: S.hour, altLo: S.altLo, altHi: S.altHi, unit: S.unit, ref: S.ref, ceiling: S.ceiling, layer: S.layer, zoom: S.zoom, chrome: S.chrome, locId: S.locId, pin: S.live ? S.pin : null, pinName: S.pinName }); }
+function setPin(lat, lon, name) { S.pin = { lat, lon }; S.pinName = name; saveGlobal(); loadForecasts(); scheduleRender(); }
+
+function wire() {
+  el("hour").oninput = e => { S.hour = +e.target.value; saveGlobal(); syncControls(); scheduleRender(); };
+  el("altLo").oninput = e => { S.altLo = Math.min(+e.target.value, S.altHi); saveGlobal(); syncControls(); scheduleRender(); };
+  el("altHi").oninput = e => { S.altHi = Math.max(+e.target.value, S.altLo); saveGlobal(); syncControls(); scheduleRender(); };
+  el("unit").onchange = e => { S.unit = e.target.value; saveGlobal(); scheduleRender(); };
+  el("ref").onchange = e => { S.ref = e.target.value; saveGlobal(); syncControls(); scheduleRender(); };
+  el("ceiling").onchange = e => { S.ceiling = +e.target.value; S.altHi = Math.min(S.altHi, S.ceiling / 1000); S.altLo = Math.min(S.altLo, S.altHi); saveGlobal(); syncControls(); scheduleRender(); };
+  el("layer").onchange = e => { S.layer = e.target.value; saveGlobal(); scheduleRender(); };
+  el("chrome").onchange = e => { S.chrome = e.target.value; saveGlobal(); scheduleRender(); };
+  el("zoomIn").onclick = () => { S.zoom = Math.min(16, S.zoom + 1); saveGlobal(); syncControls(); scheduleRender(); };
+  el("zoomOut").onclick = () => { S.zoom = Math.max(4, S.zoom - 1); saveGlobal(); syncControls(); scheduleRender(); };
+  el("loc").onchange = e => {
+    const loc = S.locations.find(l => l.id === e.target.value); if (!loc) return;
+    S.locId = loc.id;
+    if (!S.live) { S.models = S.models.filter(m => loc.forecasts[m]); if (!S.models.length) S.models = [Object.keys(loc.forecasts)[0]]; S.zoom = SNAP.zoom; }
+    setPin(loc.lat, loc.lon, loc.name);
+  };
+  el("go").onclick = search; el("q").onkeydown = e => { if (e.key === "Enter") search(); };
+  el("addPane").onclick = () => addPane("Design " + (panes.length + 1), { ...(panes[panes.length - 1]?.design || {}) });
+  el("copyAll").onclick = () => copyText(JSON.stringify(panes.map(exportPane), null, 2), "All designs copied");
+  el("resetAll").onclick = () => { panes.forEach(p => p.el.remove()); panes = []; EXAMPLES.forEach(x => addPane(x.name, x.design)); };
+}
+async function search() {
+  const q = el("q").value.trim(); if (!q) return;
+  const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) { setPin(+m[1], +m[2], ""); return; }
+  try {
+    const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json&name=${encodeURIComponent(q)}`).then(r => r.json());
+    const hit = r.results?.[0]; if (!hit) { toast(`No place found for "${q}"`); return; }
+    setPin(hit.latitude, hit.longitude, [hit.name, hit.admin1].filter(Boolean).join(", "));
+  } catch (e) { toast("Search failed: " + e.message); }
+}
+
+// ======================================================================== start
+(async function start() {
+  wire();
+  const g = load("global") || {};
+  Object.assign(S, { models: g.models || S.models, hour: g.hour ?? S.hour, altLo: g.altLo ?? S.altLo, altHi: g.altHi ?? S.altHi, unit: g.unit || S.unit,
+    ref: g.ref || S.ref, ceiling: g.ceiling || S.ceiling, layer: g.layer || S.layer, chrome: g.chrome || S.chrome });
+  const saved = load("panes");
+  (saved?.length ? saved : EXAMPLES).forEach(x => addPane(x.name, x.design));
+
+  S.live = await detectLive();
+  if (!S.live && !SNAP) { setModeText("No data: can't reach Open-Meteo and no snapshot found"); return; }
+  S.locations = SNAP ? SNAP.locations.map(l => ({ id: l.id, name: l.name, lat: l.lat, lon: l.lon, forecasts: l.forecasts })) : [];
+  if (S.live && !S.locations.length) S.locations = [{ id: "boulder", name: "Boulder, CO", lat: 40.015, lon: -105.2705 }];
+  el("loc").innerHTML = S.locations.map(l => `<option value="${l.id}">${l.name}</option>`).join("") + (S.live ? `<option value="custom" hidden>Custom pin</option>` : "");
+  el("searchRow").hidden = !S.live;
+  if (S.live && g.pin) { S.pin = g.pin; S.pinName = g.pinName || ""; S.zoom = g.zoom || 10; el("loc").value = "custom"; }
+  else {
+    const loc = S.locations.find(l => l.id === g.locId) || S.locations[0];
+    S.locId = loc.id; S.pin = { lat: loc.lat, lon: loc.lon }; S.pinName = loc.name; el("loc").value = loc.id;
+    if (!S.live) { S.zoom = SNAP.zoom; S.layer = "topo"; S.models = S.models.filter(m => loc.forecasts[m]); if (!S.models.length) S.models = ["ncep_gfs_seamless"]; }
+    else S.zoom = g.zoom || 10;
+  }
+  await loadForecasts();
+})();
+</script>
+<!-- PAGE-END -->
+</body>
+</html>
