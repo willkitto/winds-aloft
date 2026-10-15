@@ -101,7 +101,7 @@ textarea.export { width: 100%; height: 120px; font: 12px var(--font-mono); backg
 <div class="top">
   <div>
     <h1>Winds Aloft Playground</h1>
-    <p class="sub">Try arrow designs side by side on the same forecast. Each frame is a phone screen with its own design settings; the forecast controls below apply to all of them.</p>
+    <p class="sub">Try arrow designs side by side on the same forecast. Each frame is a phone screen with its own design settings; the forecast controls below apply to all of them. Drag a frame's map to pan (double-click to recentre), tap the location panel to open the table, and use the pill button to hide all panels.</p>
   </div>
   <span class="mode" id="mode"><b></b><span id="modeText">Starting…</span></span>
 </div>
@@ -133,6 +133,7 @@ textarea.export { width: 100%; height: 120px; font: 12px var(--font-mono); backg
     <span>Units &amp; reference</span>
     <div class="row">
       <select id="unit"><option value="kt">kt</option><option value="mph">mph</option><option value="kmh">km/h</option><option value="ms">m/s</option></select>
+      <select id="tempUnit" aria-label="Temperature unit"><option value="C">°C</option><option value="F">°F</option></select>
       <select id="ref"><option value="MSL">MSL</option><option value="AGL">AGL</option></select>
       <select id="ceiling"><option value="14000">14k ceiling</option><option value="18000" selected>18k ceiling</option><option value="24000">24k ceiling</option><option value="30000">30k ceiling</option></select>
     </div>
@@ -184,29 +185,29 @@ const SNAP = window.WA_SNAPSHOT || null;
 // ======================================================================== design knobs
 const DEFAULT_DESIGN = {
   layout: "stacked", glyph: "arrow", pointing: "downwind",
-  fill: 0.88, cellMin: 16, cellMax: 56, minFrac: 0.45, fullKt: 40,
-  strokeScale: 1, headScale: 1, halo: 1, staff: true, colGap: 10,
-  colorMode: "auto", speedLabels: true, altLabels: true, labelScale: 1, gnd: true,
+  rowHeight: 38, lenScale: 1.25, minFrac: 0.5, fullKt: 40,
+  strokeScale: 1, headScale: 1, halo: 1, staff: true, colGap: 8,
+  colorMode: "auto", speedLabels: true, tempLabels: true, altLabels: true, labelScale: 1, gnd: true,
   fanPxPerKt: 2.2, mapFade: 0, mapDarken: 0,
 };
 const KNOBS = [
   { group: "Layout", key: "layout", label: "Layout", type: "select", options: [["stacked","Stacked columns"],["fan","Fan from pin"]] },
   { group: "Layout", key: "glyph", label: "Glyph", type: "select", options: [["arrow","Arrow"],["triangle","Triangle"],["barb","Wind barb"]] },
   { group: "Layout", key: "pointing", label: "Arrows point", type: "select", options: [["downwind","Downwind (to)"],["upwind","Upwind (from)"]] },
-  { group: "Layout", key: "fill", label: "Column height", type: "range", min: 0.4, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + "%" },
-  { group: "Layout", key: "cellMin", label: "Row min", type: "range", min: 8, max: 40, step: 1, fmt: v => v + " dp" },
-  { group: "Layout", key: "cellMax", label: "Row max", type: "range", min: 20, max: 90, step: 1, fmt: v => v + " dp" },
+  { group: "Layout", key: "rowHeight", label: "Row spacing", type: "range", min: 20, max: 80, step: 1, fmt: v => v + " dp" },
   { group: "Layout", key: "colGap", label: "Column gap", type: "range", min: 0, max: 40, step: 1, fmt: v => v + " dp" },
   { group: "Layout", key: "staff", label: "Staff line", type: "toggle" },
-  { group: "Arrows", key: "minFrac", label: "Calm size", type: "range", min: 0.1, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + "% of row" },
+  { group: "Arrows", key: "lenScale", label: "Arrow length", type: "range", min: 0.5, max: 1.8, step: 0.05, fmt: v => Math.round(v * 100) + "% of row" },
+  { group: "Arrows", key: "minFrac", label: "Calm size", type: "range", min: 0.1, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + "% of full" },
   { group: "Arrows", key: "fullKt", label: "Full size at", type: "range", min: 10, max: 80, step: 1, fmt: v => v + " kt" },
   { group: "Arrows", key: "strokeScale", label: "Line weight", type: "range", min: 0.4, max: 2.5, step: 0.05, fmt: v => "×" + v.toFixed(2) },
   { group: "Arrows", key: "headScale", label: "Head size", type: "range", min: 0.4, max: 2, step: 0.05, fmt: v => "×" + v.toFixed(2) },
   { group: "Arrows", key: "halo", label: "Dark outline", type: "range", min: 0, max: 1.5, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
   { group: "Arrows", key: "fanPxPerKt", label: "Fan length / kt", type: "range", min: 0.5, max: 5, step: 0.1, fmt: v => v.toFixed(1) + " dp" },
   { group: "Colour & labels", key: "colorMode", label: "Colour by", type: "select", wide: true,
-    options: [["auto","Auto (altitude; model when comparing)"],["altitude","Altitude"],["speed","Speed"],["model","Model"],["white","White"]] },
+    options: [["auto","Auto (altitude; model when comparing)"],["altitude","Altitude"],["speed","Speed"],["temperature","Temperature"],["model","Model"],["white","White"]] },
   { group: "Colour & labels", key: "speedLabels", label: "Speed numbers", type: "toggle" },
+  { group: "Colour & labels", key: "tempLabels", label: "Temperatures", type: "toggle" },
   { group: "Colour & labels", key: "altLabels", label: "Altitude labels", type: "toggle" },
   { group: "Colour & labels", key: "gnd", label: "Ground line", type: "toggle" },
   { group: "Colour & labels", key: "labelScale", label: "Label size", type: "range", min: 0.6, max: 1.8, step: 0.05, fmt: v => "×" + v.toFixed(2) },
@@ -214,9 +215,9 @@ const KNOBS = [
   { group: "Map", key: "mapDarken", label: "Darken map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
 ];
 const EXAMPLES = [
-  { name: "App v0.3 (current)", design: {} },
-  { name: "Wind barbs", design: { glyph: "barb", speedLabels: true, minFrac: 1 } },
-  { name: "Bold, coloured by speed", design: { colorMode: "speed", strokeScale: 1.6, headScale: 1.2, minFrac: 0.6, cellMax: 64, mapFade: 0.25 } },
+  { name: "Longer arrows (proposed)", design: {} },
+  { name: "Coloured by temperature", design: { colorMode: "temperature", strokeScale: 1.3 } },
+  { name: "Wind barbs", design: { glyph: "barb", minFrac: 1, lenScale: 1.1 } },
 ];
 
 // ======================================================================== wind maths (port of WindMath.kt)
@@ -225,14 +226,22 @@ function fromUv(u, v) { let d = Math.atan2(-u, -v) * 180 / Math.PI; if (d < 0) d
 function interpolate(samples, target, ground) {
   if (!samples.length || target < ground - 1) return null;
   const first = samples[0];
-  if (target <= first.h) return first.h - ground <= 50 ? { ...first, h: target } : null;
+  if (target <= first.h) return first.h - ground <= 50 ? { ...first, h: target, t: interpTemp(samples, target) } : null;
   if (target > samples[samples.length - 1].h) return null;
   const i = samples.findIndex(s => s.h >= target), hi = samples[i], lo = samples[i - 1];
   const span = hi.h - lo.h, t = span <= 0 ? 0 : (target - lo.h) / span;
   const [u0, v0] = toUv(lo.sp, lo.d), [u1, v1] = toUv(hi.sp, hi.d);
   const [sp, d] = fromUv(u0 + (u1 - u0) * t, v0 + (v1 - v0) * t);
-  const temp = lo.t != null && hi.t != null ? lo.t + (hi.t - lo.t) * t : null;
-  return { h: target, sp, d, t: temp };
+  return { h: target, sp, d, t: interpTemp(samples, target) };
+}
+/** Temperature is interpolated only between samples that have one (some models give wind but no temperature at 80–180 m). */
+function interpTemp(samples, target) {
+  let lo = null, hi = null;
+  for (const s of samples) { if (s.t == null) continue; if (s.h <= target) lo = s; else { hi = s; break; } }
+  if (lo && hi) return lo.t + (hi.t - lo.t) * (target - lo.h) / (hi.h - lo.h);
+  if (lo && target - lo.h <= 50) return lo.t;
+  if (hi && hi.h - target <= 50) return hi.t;
+  return null;
 }
 function parseForecast(entry) {
   const H = entry.hourly, elev = entry.elevation || 0, levels = [];
@@ -257,7 +266,7 @@ function windsAt(fp, epoch, altsFt, ref) {
   return altsFt.map(ft => {
     if (i < 0) return null;
     const s = interpolate(fp.profiles[i], (ref === "AGL" ? fp.elev : 0) + ft * M_PER_FT, fp.elev);
-    return s ? { alt: ft, sp: s.sp, d: s.d } : null;
+    return s ? { alt: ft, sp: s.sp, d: s.d, t: s.t } : null;
   });
 }
 function maxVectorDifference(ws) {
@@ -278,12 +287,17 @@ function turbo(x) {
 }
 const altitudeColor = (ft, ceiling) => turbo(0.1 + 0.85 * Math.min(1, Math.max(0, ft / ceiling)));
 const speedColor = kt => turbo(0.12 + 0.83 * Math.min(1, kt / 50));
+/** Label tint: pale blue below freezing, pale orange above, white around 0 °C. */
+const tempLabelColor = c => c <= -1 ? "#b8e4ff" : c >= 1 ? "#ffd6ad" : "#ffffff";
+/** −40 °C (deep blue) … +35 °C (red). */
+const tempColor = c => c == null ? "#ffffff" : turbo(0.08 + 0.87 * Math.min(1, Math.max(0, (c + 40) / 75)));
 
 // ======================================================================== state
 const S = {
   live: false, locations: [], locId: null, pin: null, pinName: "", elev: null,
   models: ["ncep_gfs_seamless"], forecasts: {}, baseEpoch: 0, hour: 3,
-  altLo: 4, altHi: 14, unit: "kt", ref: "MSL", ceiling: 18000, layer: "topo", zoom: 10, chrome: "collapsed",
+  altLo: 4, altHi: 14, unit: "kt", tempUnit: "C", ref: "MSL", ceiling: 18000, layer: "topo", zoom: 10, chrome: "collapsed",
+  panX: 0, panY: 0,
 };
 let panes = [];
 function store(key, val) { try { localStorage.setItem("wa-playground-" + key, JSON.stringify(val)); } catch (e) {} }
@@ -383,6 +397,7 @@ function colourFor(design, w, col) {
   switch (design.colorMode) {
     case "altitude": return altitudeColor(w.alt, S.ceiling);
     case "speed": return speedColor(kt);
+    case "temperature": return tempColor(w.t);
     case "model": return MODEL_COLORS[col.slot % 3];
     case "white": return "#ffffff";
     default: return comparing ? MODEL_COLORS[col.slot % 3] : altitudeColor(w.alt, S.ceiling);
@@ -393,7 +408,9 @@ function drawPane(pane) {
   if (cv.width !== PHONE_W * dpr) { cv.width = PHONE_W * dpr; cv.height = PHONE_H * dpr; }
   const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const d = pane.design, box = chromeBoxes(S.chrome);
-  const pinX = PHONE_W / 2, pinY = PHONE_H - box.bottom - 28;
+  // The pin's resting spot is fixed (just above the collapsed panels); opening the table covers the
+  // map rather than shrinking the arrows. Drag to pan.
+  const pinX = PHONE_W / 2 + S.panX, pinY = PHONE_H - chromeBoxes("collapsed").bottom - 28 + S.panY;
   pane.view = { pinX, pinY };
   drawMap(ctx, pinX, pinY);
   if (d.mapFade > 0) { ctx.fillStyle = `rgba(255,255,255,${d.mapFade})`; ctx.fillRect(0, 0, PHONE_W, PHONE_H); }
@@ -402,11 +419,13 @@ function drawPane(pane) {
     const cols = columnsFor(d);
     if (cols.length) {
       if (d.layout === "fan") drawFan(ctx, pinX, pinY, cols, d);
-      else drawColumns(ctx, pinX, pinY, cols, d, PHONE_H - box.top - box.bottom);
+      else drawColumns(ctx, pinX, pinY, cols, d);
     }
     drawPin(ctx, pinX, pinY);
   }
+  pane.hits = [];
   if (S.chrome !== "none") drawChrome(ctx, box, pane);
+  drawPanelsButton(ctx, box, pane);
 }
 function drawMap(ctx, pinX, pinY) {
   ctx.fillStyle = "#dfe3e6"; ctx.fillRect(0, 0, PHONE_W, PHONE_H);
@@ -423,18 +442,25 @@ function haloText(ctx, s, x, y, color) {
   ctx.lineJoin = "round"; ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(0,0,0,0.9)"; ctx.strokeText(s, x, y);
   ctx.fillStyle = color; ctx.fillText(s, x, y);
 }
-function drawColumns(ctx, x, y, cols, d, visible) {
+function drawColumns(ctx, x, y, cols, d) {
   const rows = Math.max(...cols.map(c => c.winds.length)); if (!rows) return;
-  const labelRoom = cols.length > 1 ? 22 : 0;
-  const cell = clamp((visible * d.fill - labelRoom) / rows, d.cellMin, Math.max(d.cellMin, d.cellMax));
-  const textSize = clamp(cell * 0.42, 10, 15) * d.labelScale;
+  const cell = d.rowHeight;
+  // Rows below the terrain (MSL altitudes under the ground) are left out, so the column starts at the pin.
+  let skip = 0; while (skip < rows && !cols.some(c => c.winds[skip])) skip++;
+  const rowY = i => y - cell * (i - skip + 0.5);
+  const textSize = clamp(cell * 0.36, 10, 15) * d.labelScale;
   setText(ctx, textSize, "left");
   const speedW = d.speedLabels ? ctx.measureText("888").width + 4 : 0;
-  const colW = cell + speedW + d.colGap;
+  setText(ctx, textSize * 0.88, "left");
+  const tempW = d.tempLabels ? ctx.measureText("-88°").width + 6 : 0;
+  setText(ctx, textSize, "right");
+  const altW = d.altLabels ? ctx.measureText("14k").width + 8 : 0;
+  const colW = cell + speedW + tempW + d.colGap;
   const stroke = clamp(cell * 0.085, 2.4, 4.2) * d.strokeScale;
   const groupW = cols.length * colW - d.colGap;
-  const firstCx = cols.length === 1 ? x : x - groupW / 2 + cell / 2;
-  const top = y - cell * rows;
+  // One column sits on the pin; several are centred as a block (altitude labels included).
+  const firstCx = cols.length === 1 ? x : x + cell / 2 - (groupW - altW) / 2;
+  const top = y - cell * (rows - skip);
   const every = Math.max(1, Math.ceil(textSize * 1.15 / cell));
   ctx.lineCap = "round";
   if (cols.length > 1 && d.staff) line(ctx, firstCx, y, firstCx + (cols.length - 1) * colW, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
@@ -444,14 +470,18 @@ function drawColumns(ctx, x, y, cols, d, visible) {
     if (d.staff) line(ctx, cx, y, cx, top, staffColor, 1.6, "rgba(0,0,0,0.55)", 4);
     col.winds.forEach((w, i) => {
       if (!w) return;
-      const cy = y - cell * (i + 0.5), color = colourFor(d, w, col);
+      const cy = rowY(i), color = colourFor(d, w, col);
       drawGlyph(ctx, cx, cy, w, cell, stroke, color, d, true);
-      if (d.speedLabels && i % every === 0) {
+      if (i % every === 0) {
         setText(ctx, textSize, "left");
-        haloText(ctx, fmtSpeed(w.sp), cx + cell / 2 + 3, cy + textSize * 0.36, "#ffffff");
+        if (d.speedLabels) haloText(ctx, fmtSpeed(w.sp), cx + cell / 2 + 3, cy + textSize * 0.36, "#ffffff");
+        if (d.tempLabels && w.t != null) {
+          setText(ctx, textSize * 0.88, "left");
+          haloText(ctx, fmtTemp(w.t), cx + cell / 2 + 3 + speedW + 2, cy + textSize * 0.36, d.colorMode === "temperature" ? "#ffffff" : tempLabelColor(w.t));
+        }
       }
     });
-    if (col.label) { setText(ctx, textSize, "center"); haloText(ctx, col.label, cx, top - 6, MODEL_COLORS[col.slot % 3]); }
+    if (col.label) { setText(ctx, textSize, "center"); haloText(ctx, col.label, cx + (speedW + tempW) / 2, top - 6, MODEL_COLORS[col.slot % 3]); }
   });
   const altX = firstCx - cell / 2 - 5;
   if (d.altLabels) {
@@ -459,19 +489,14 @@ function drawColumns(ctx, x, y, cols, d, visible) {
     for (let i = 0; i < rows; i++) {
       if (i % every) continue;
       const w = cols.map(c => c.winds[i]).find(Boolean); if (!w) continue;
-      const a = w.alt; haloText(ctx, a === 0 ? "SFC" : a / 1000 + "k", altX, y - cell * (i + 0.5) + textSize * 0.36, "#ffffff");
+      const a = w.alt; haloText(ctx, a === 0 ? "SFC" : a / 1000 + "k", altX, rowY(i) + textSize * 0.36, "#ffffff");
     }
   }
-  if (d.gnd) {
-    let firstData = -1;
-    for (let i = 0; i < rows; i++) if (cols.some(c => c.winds[i])) { firstData = i; break; }
-    if (firstData > 0) {
-      const gy = y - cell * firstData;
-      ctx.setLineDash([6, 4]);
-      line(ctx, firstCx - cell / 2, gy, firstCx + (cols.length - 1) * colW + cell / 2 + speedW, gy, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
-      ctx.setLineDash([]);
-      setText(ctx, textSize, "right"); haloText(ctx, "GND", altX, gy + textSize * 0.36, "#ffffff");
-    }
+  if (d.gnd && skip > 0) {
+    ctx.setLineDash([6, 4]);
+    line(ctx, firstCx - cell / 2, y, firstCx + (cols.length - 1) * colW + cell / 2 + speedW + tempW, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
+    ctx.setLineDash([]);
+    setText(ctx, textSize, "right"); haloText(ctx, "GND", altX, y + textSize * 0.36, "#ffffff");
   }
 }
 function drawFan(ctx, x, y, cols, d) {
@@ -487,9 +512,9 @@ function line(ctx, x0, y0, x1, y1, color, width, halo, haloW) {
 /** stacked: glyph centred on (cx, cy) and sized to `size` (the row). fan: glyph starts at (cx, cy), `size` long. */
 function drawGlyph(ctx, cx, cy, w, size, stroke, color, d, stacked) {
   const kt = w.sp * KT_PER_MS, haloA = Math.min(1, 0.67 * d.halo), haloC = `rgba(0,0,0,${haloA})`;
-  if (d.glyph === "barb") return drawBarb(ctx, cx, cy, w, stacked ? size * 0.95 : 44, stroke, color, haloC, d, stacked);
+  if (d.glyph === "barb") return drawBarb(ctx, cx, cy, w, stacked ? size * d.lenScale : 44, stroke, color, haloC, d, stacked);
   if (kt < 1) { ctx.strokeStyle = color; ctx.lineWidth = stroke * 0.8; ctx.beginPath(); ctx.arc(cx, cy, stacked ? size * 0.16 : 8, 0, 7); ctx.stroke(); return; }
-  const len = stacked ? size * 0.95 * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt)) : size;
+  const len = stacked ? size * d.lenScale * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt)) : size;
   const a = (w.d + (d.pointing === "downwind" ? 180 : 0)) * Math.PI / 180, dx = Math.sin(a), dy = -Math.cos(a);
   const sx = stacked ? cx - dx * len / 2 : cx, sy = stacked ? cy - dy * len / 2 : cy;
   const ex = sx + dx * len, ey = sy + dy * len;
@@ -567,23 +592,48 @@ function drawChrome(ctx, box, pane) {
   ctx.fillStyle = "#5a6470"; ctx.font = "12px system-ui, sans-serif";
   const sub = [S.elev != null ? `Elev ${Math.round(S.elev / M_PER_FT).toLocaleString()} ft` : null, S.models.length > 1 ? `${S.models.length} models` : shortName(S.models[0])].filter(Boolean).join(" · ");
   ctx.fillText(sub, 28, py + 46);
+  ctx.strokeStyle = "#5a6470"; ctx.lineWidth = 2; ctx.beginPath();
+  const ay = py + 31, up = S.chrome !== "table";
+  ctx.moveTo(PHONE_W - 44, ay + (up ? 3 : -3)); ctx.lineTo(PHONE_W - 38, ay + (up ? -3 : 3)); ctx.lineTo(PHONE_W - 32, ay + (up ? 3 : -3)); ctx.stroke();
+  pane.hits.push({ x: 12, y: py, w: PHONE_W - 24, h: box.pinH, act: "table" });
+  pane.hits.push({ x: 12, y: cy, w: PHONE_W - 24, h: box.controlsH, act: "none" });
+  pane.hits.push({ x: 12, y: 32, w: PHONE_W - 24, h: 48, act: "none" });
   if (S.chrome === "table") drawTable(ctx, 24, py + box.pinH, PHONE_W - 48, box.tableH - 8);
+}
+/** One-tap pill that hides or shows every panel. */
+function drawPanelsButton(ctx, box, pane) {
+  const hidden = S.chrome === "none", label = hidden ? "Show panels" : "Hide panels";
+  ctx.font = "600 13px system-ui, sans-serif";
+  const w = ctx.measureText(label).width + 28, h = 34, x = PHONE_W - 12 - w;
+  const y = hidden ? PHONE_H - 12 - h : PHONE_H - box.bottom - h;
+  ctx.fillStyle = hidden ? "rgba(21,33,46,0.92)" : "rgba(247,248,250,0.96)";
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 17); ctx.fill();
+  ctx.fillStyle = hidden ? "#ffffff" : "#15212e"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(label, x + w / 2, y + h / 2 + 1); ctx.textBaseline = "alphabetic";
+  pane.hits.push({ x, y, w, h, act: "panels" });
 }
 function drawTable(ctx, x, y, w, h) {
   const cols = columnsFor({}), alts = []; for (let k = S.altHi; k >= S.altLo; k--) alts.push(k);
   ctx.strokeStyle = "#d3dae1"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x - 12, y); ctx.lineTo(x + w + 12, y); ctx.stroke();
   ctx.font = "600 11px system-ui, sans-serif"; ctx.fillStyle = "#5a6470"; ctx.textAlign = "left";
-  const colX = i => x + 54 + i * ((w - 54 - 34) / Math.max(1, cols.length));
+  const colX = i => x + 48 + i * ((w - 48 - 26) / Math.max(1, cols.length));
   ctx.fillText("Alt", x, y + 18); cols.forEach((c, i) => ctx.fillText(shortName(c.model), colX(i), y + 18));
-  if (cols.length > 1) ctx.fillText("Δ", x + w - 26, y + 18);
-  ctx.font = "12px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#15212e";
+  if (cols.length > 1) ctx.fillText("Δ", x + w - 20, y + 18);
+  ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#15212e";
   alts.slice(0, Math.floor((h - 26) / 19)).forEach((k, r) => {
     const yy = y + 38 + r * 19, idx = k - S.altLo;
     ctx.fillText((k * 1000).toLocaleString(), x, yy);
     const ws = cols.map(c => c.winds[idx]);
-    ws.forEach((wd, i) => ctx.fillText(wd ? `${String(Math.round(wd.d)).padStart(3, "0")}° ${fmtSpeed(wd.sp)}` : "—", colX(i), yy));
+    ws.forEach((wd, i) => {
+      if (!wd) { ctx.fillText("—", colX(i), yy); return; }
+      const txt = `${String(Math.round(wd.d)).padStart(3, "0")}/${fmtSpeed(wd.sp)}`;
+      ctx.fillStyle = "#15212e"; ctx.fillText(txt, colX(i), yy);
+      ctx.fillStyle = wd.t != null && wd.t < 0 ? "#1f6fb2" : "#b5502a";
+      ctx.fillText(fmtTemp(wd.t), colX(i) + ctx.measureText(txt + " ").width, yy);
+      ctx.fillStyle = "#15212e";
+    });
     const sp = maxVectorDifference(ws.filter(Boolean));
-    if (sp != null) ctx.fillText(fmtSpeed(sp), x + w - 26, yy);
+    if (sp != null) ctx.fillText(fmtSpeed(sp), x + w - 20, yy);
   });
 }
 
@@ -596,6 +646,7 @@ function renderAll() { for (const p of panes) drawPane(p); }
 const el = id => document.getElementById(id);
 const shortName = id => MODELS.find(m => m.id === id)?.short || id;
 const fmtSpeed = ms => String(Math.round(ms * UNITS[S.unit].f));
+const fmtTemp = c => c == null ? "" : (S.tempUnit === "F" ? Math.round(c * 9 / 5 + 32) : Math.round(c)) + "°";
 const coordText = p => p ? `${Math.abs(p.lat).toFixed(3)}°${p.lat >= 0 ? "N" : "S"} ${Math.abs(p.lon).toFixed(3)}°${p.lon >= 0 ? "E" : "W"}` : "";
 function fmtTime(epoch) {
   const dt = new Date(epoch * 1000);
@@ -628,7 +679,7 @@ function makePane(name, design) {
   art.querySelector("[data-act=del]").onclick = () => { if (panes.length > 1) { panes = panes.filter(p => p !== pane); art.remove(); savePanes(); } else toast("Keep at least one frame"); };
   art.querySelector("[data-act=copy]").onclick = () => copyText(JSON.stringify(exportPane(pane), null, 2), "Design copied");
   art.querySelector("[data-act=reset]").onclick = () => { pane.design = { ...DEFAULT_DESIGN }; buildKnobs(pane); savePanes(); scheduleRender(); };
-  pane.canvas.addEventListener("click", e => onMapClick(pane, e));
+  attachPointer(pane);
   buildKnobs(pane);
   return pane;
 }
@@ -672,7 +723,7 @@ function exportPane(p) {
   const changed = Object.fromEntries(Object.entries(p.design).filter(([k, v]) => DEFAULT_DESIGN[k] !== v));
   return { name: p.name, changedFromApp: changed, design: p.design };
 }
-function savePanes() { store("panes", panes.map(p => ({ name: p.name, design: p.design }))); }
+function savePanes() { store("panes-v2", panes.map(p => ({ name: p.name, design: p.design }))); }
 function copyText(text, msg) {
   navigator.clipboard?.writeText(text).then(() => toast(msg), () => showExport(text)) ?? showExport(text);
 }
@@ -681,11 +732,35 @@ function showExport(text) {
   if (!ta) { ta = document.createElement("textarea"); ta.className = "export"; ta.readOnly = true; ta.setAttribute("aria-label", "Exported designs"); el("panes").before(ta); }
   ta.value = text; ta.focus(); ta.select(); toast("Select and copy the text above");
 }
-function onMapClick(pane, e) {
-  if (!S.live) { toast("Snapshot mode: pick one of the sample locations above"); return; }
-  const r = pane.canvas.getBoundingClientRect(), sx = (e.clientX - r.left) * PHONE_W / r.width, sy = (e.clientY - r.top) * PHONE_H / r.height;
+let lastShownChrome = "collapsed";
+function attachPointer(pane) {
+  const cv = pane.canvas; let drag = null;
+  const toPhone = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * PHONE_W / r.width, (e.clientY - r.top) * PHONE_H / r.height]; };
+  cv.addEventListener("pointerdown", e => { const [x, y] = toPhone(e); drag = { x, y, panX: S.panX, panY: S.panY, moved: false }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const [x, y] = toPhone(e);
+    if (!drag.moved && Math.hypot(x - drag.x, y - drag.y) < 5) return;
+    drag.moved = true; S.panX = drag.panX + x - drag.x; S.panY = drag.panY + y - drag.y; cv.style.cursor = "grabbing"; scheduleRender();
+  });
+  cv.addEventListener("pointerup", e => {
+    const d = drag; drag = null; cv.style.cursor = "";
+    if (!d) return;
+    if (d.moved) { saveGlobal(); return; }
+    const [x, y] = toPhone(e), hit = (pane.hits || []).find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+    if (hit?.act === "panels") { if (S.chrome === "none") S.chrome = lastShownChrome; else { lastShownChrome = S.chrome; S.chrome = "none"; } }
+    else if (hit?.act === "table") S.chrome = S.chrome === "table" ? "collapsed" : "table";
+    else if (!hit) { onMapClick(pane, x, y); return; }
+    else return;
+    saveGlobal(); syncControls(); scheduleRender();
+  });
+  cv.addEventListener("dblclick", () => { S.panX = 0; S.panY = 0; saveGlobal(); scheduleRender(); });
+}
+function onMapClick(pane, sx, sy) {
+  if (!S.live) { toast("Drag to pan. Snapshot mode: pick a sample location above to move the pin"); return; }
   const [px, py] = worldPx(S.pin.lat, S.pin.lon, S.zoom);
   const p = lonLatFromWorld(px + sx - pane.view.pinX, py + sy - pane.view.pinY, S.zoom);
+  S.panX = 0; S.panY = 0;
   setPin(p.lat, p.lon, "");
 }
 
@@ -695,7 +770,7 @@ function syncControls() {
   el("altLo").max = el("altHi").max = S.ceiling / 1000;
   el("timeVal").textContent = fmtTime(S.baseEpoch + S.hour * 3600) + ` (+${S.hour} h)`;
   el("altVal").textContent = `${(S.altLo * 1000).toLocaleString()}–${(S.altHi * 1000).toLocaleString()} ft ${S.ref}`;
-  el("unit").value = S.unit; el("ref").value = S.ref; el("ceiling").value = S.ceiling; el("layer").value = S.layer; el("chrome").value = S.chrome;
+  el("unit").value = S.unit; el("tempUnit").value = S.tempUnit; el("ref").value = S.ref; el("ceiling").value = S.ceiling; el("layer").value = S.layer; el("chrome").value = S.chrome;
   el("zoomVal").textContent = "z" + S.zoom;
   el("zoomIn").disabled = el("zoomOut").disabled = el("layer").disabled = !S.live;
   const host = el("models"); host.innerHTML = "";
@@ -713,9 +788,9 @@ function syncControls() {
     };
     host.appendChild(lab);
   }
-  el("locNote").textContent = S.live ? "Tap a frame's map to move the pin." : "Snapshot data: sample locations only. Open the playground from the repo for live forecasts anywhere.";
+  el("locNote").textContent = S.live ? "Tap a frame's map to move the pin; drag to pan." : "Snapshot data: sample locations only. Open the playground from the repo for live forecasts anywhere.";
 }
-function saveGlobal() { store("global", { models: S.models, hour: S.hour, altLo: S.altLo, altHi: S.altHi, unit: S.unit, ref: S.ref, ceiling: S.ceiling, layer: S.layer, zoom: S.zoom, chrome: S.chrome, locId: S.locId, pin: S.live ? S.pin : null, pinName: S.pinName }); }
+function saveGlobal() { store("global", { models: S.models, hour: S.hour, altLo: S.altLo, altHi: S.altHi, unit: S.unit, tempUnit: S.tempUnit, panX: S.panX, panY: S.panY, ref: S.ref, ceiling: S.ceiling, layer: S.layer, zoom: S.zoom, chrome: S.chrome, locId: S.locId, pin: S.live ? S.pin : null, pinName: S.pinName }); }
 function setPin(lat, lon, name) { S.pin = { lat, lon }; S.pinName = name; saveGlobal(); loadForecasts(); scheduleRender(); }
 
 function wire() {
@@ -723,6 +798,7 @@ function wire() {
   el("altLo").oninput = e => { S.altLo = Math.min(+e.target.value, S.altHi); saveGlobal(); syncControls(); scheduleRender(); };
   el("altHi").oninput = e => { S.altHi = Math.max(+e.target.value, S.altLo); saveGlobal(); syncControls(); scheduleRender(); };
   el("unit").onchange = e => { S.unit = e.target.value; saveGlobal(); scheduleRender(); };
+  el("tempUnit").onchange = e => { S.tempUnit = e.target.value; saveGlobal(); scheduleRender(); };
   el("ref").onchange = e => { S.ref = e.target.value; saveGlobal(); syncControls(); scheduleRender(); };
   el("ceiling").onchange = e => { S.ceiling = +e.target.value; S.altHi = Math.min(S.altHi, S.ceiling / 1000); S.altLo = Math.min(S.altLo, S.altHi); saveGlobal(); syncControls(); scheduleRender(); };
   el("layer").onchange = e => { S.layer = e.target.value; saveGlobal(); scheduleRender(); };
@@ -733,6 +809,7 @@ function wire() {
     const loc = S.locations.find(l => l.id === e.target.value); if (!loc) return;
     S.locId = loc.id;
     if (!S.live) { S.models = S.models.filter(m => loc.forecasts[m]); if (!S.models.length) S.models = [Object.keys(loc.forecasts)[0]]; S.zoom = SNAP.zoom; }
+    S.panX = 0; S.panY = 0;
     setPin(loc.lat, loc.lon, loc.name);
   };
   el("go").onclick = search; el("q").onkeydown = e => { if (e.key === "Enter") search(); };
@@ -755,9 +832,9 @@ async function search() {
 (async function start() {
   wire();
   const g = load("global") || {};
-  Object.assign(S, { models: g.models || S.models, hour: g.hour ?? S.hour, altLo: g.altLo ?? S.altLo, altHi: g.altHi ?? S.altHi, unit: g.unit || S.unit,
+  Object.assign(S, { models: g.models || S.models, hour: g.hour ?? S.hour, altLo: g.altLo ?? S.altLo, altHi: g.altHi ?? S.altHi, unit: g.unit || S.unit, tempUnit: g.tempUnit || S.tempUnit, panX: g.panX || 0, panY: g.panY || 0,
     ref: g.ref || S.ref, ceiling: g.ceiling || S.ceiling, layer: g.layer || S.layer, chrome: g.chrome || S.chrome });
-  const saved = load("panes");
+  const saved = load("panes-v2");
   (saved?.length ? saved : EXAMPLES).forEach(x => addPane(x.name, x.design));
 
   S.live = await detectLive();
