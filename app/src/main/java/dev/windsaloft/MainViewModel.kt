@@ -8,6 +8,8 @@ import dev.windsaloft.data.Camera
 import dev.windsaloft.data.Connectivity
 import dev.windsaloft.data.Geocoding
 import dev.windsaloft.data.Http
+import dev.windsaloft.data.Metar
+import dev.windsaloft.data.Metars
 import dev.windsaloft.data.OpenMeteo
 import dev.windsaloft.data.Place
 import dev.windsaloft.data.Prefs
@@ -60,6 +62,10 @@ data class UiState(
     val savedWindTimes: Map<String, Long> = emptyMap(),
     /** Progress while downloading winds for every saved place: done to total. */
     val savingPlaces: Pair<Int, Int>? = null,
+    /** Latest reports from airports near the pin, nearest first. */
+    val metars: List<Metar> = emptyList(),
+    /** When [metars] were downloaded (0 = never). */
+    val metarsAtMs: Long = 0L,
 ) {
     val selectedEpoch: Long get() = nowHourEpoch + hourOffset * 3600L
 
@@ -108,6 +114,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private var pinJob: Job? = null
     private var placesJob: Job? = null
+    private var metarJob: Job? = null
 
     init {
         Http.userAgent = "${BuildConfig.APPLICATION_ID}/${BuildConfig.VERSION_NAME} (Android)"
@@ -142,6 +149,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Back online: freshen the current spot if its winds are getting old, then the saved places.
         val s = _state.value
         if (s.pin != null && (s.pinForecasts.isEmpty() || System.currentTimeMillis() - s.pinFetchedAtMs > 15 * 60_000L)) fetchPin()
+        if (s.pin != null && System.currentTimeMillis() - s.metarsAtMs > 10 * 60_000L) loadMetars(s.pin)
         updateSavedPlaces(force = false)
     }
 
@@ -151,7 +159,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val name = label ?: _state.value.favorites.firstOrNull { it.sameSpot(location) }?.name
         _state.update {
             it.copy(
-                pin = location, pinLabel = name, pinForecasts = emptyMap(), pinFetchedAtMs = 0L,
+                pin = location, pinLabel = name, pinForecasts = emptyMap(), pinFetchedAtMs = 0L, metars = emptyList(), metarsAtMs = 0L,
                 searchResults = emptyList(), pendingPin = null, chartAt = null,
                 recents = SavedPlace.pushRecent(it.recents, SavedPlace(name, location, System.currentTimeMillis())),
             )
@@ -162,8 +170,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loadPin(location, announceOffline = true)
     }
 
+    /**
+     * Airport reports near [pin]: the last saved ones first (still useful in the plane), then fresh
+     * ones when online. Looks further afield when nothing is close.
+     */
+    private fun loadMetars(pin: LatLon) {
+        if (!_state.value.settings.showMetars) return
+        metarJob?.cancel()
+        metarJob = viewModelScope.launch {
+            withContext(Dispatchers.IO) { cache.load(pin, METAR_KEY) }?.let { e ->
+                val saved = runCatching { Metars.parse(e.json, pin) }.getOrDefault(emptyList())
+                _state.update { if (it.pin == pin && it.metarsAtMs < e.fetchedAtMs) it.copy(metars = saved, metarsAtMs = e.fetchedAtMs) else it }
+            }
+            if (!net.isOnline()) return@launch
+            try {
+                for (radius in listOf(0.6, 1.5)) {
+                    val json = Http.get(Metars.url(pin, radius))
+                    val list = withContext(Dispatchers.Default) { Metars.parse(json, pin) }
+                    if (list.isEmpty() && radius < 1.5) continue
+                    val now = System.currentTimeMillis()
+                    withContext(Dispatchers.IO) { cache.save(pin, METAR_KEY, json, now, 0) }
+                    _state.update { if (it.pin == pin) it.copy(metars = list, metarsAtMs = now) else it }
+                    break
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Observations are extra; the forecast is what matters, so stay quiet on failure.
+            }
+        }
+    }
+
     /** Shows the saved winds for [pin] straight away (if any), then downloads fresh ones when online. */
     private fun loadPin(pin: LatLon, announceOffline: Boolean) {
+        loadMetars(pin)
         pinJob?.cancel()
         pinJob = viewModelScope.launch {
             val models = _state.value.settings.modelIds
@@ -361,6 +401,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private companion object {
+        /** Airport reports are cached beside the winds, under this pseudo-model name. */
+        const val METAR_KEY = "metar"
+    }
+
     @VisibleForTesting
     internal fun replaceStateForTest(transform: (UiState) -> UiState) = _state.update(transform)
 
@@ -368,12 +413,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(nowHourEpoch = currentHourEpoch(), online = net.isOnline()) }
         if (!_state.value.online) { _messages.tryEmit("Offline: can't download new winds right now"); return }
         fetchPin()
+        _state.value.pin?.let { loadMetars(it) }
     }
 
     /** Called when the app returns to the foreground so "now" stays current. */
     fun onResume() {
         val now = currentHourEpoch()
         if (now != _state.value.nowHourEpoch) _state.update { it.copy(nowHourEpoch = now) }
+        val s = _state.value
+        if (s.pin != null && System.currentTimeMillis() - s.metarsAtMs > 10 * 60_000L) loadMetars(s.pin)
     }
 
     // ---- Controls ----
@@ -395,6 +443,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(settings = new, altRangeK = r.first.coerceAtMost(ceilK)..r.last.coerceAtMost(ceilK))
         }
         prefs.saveAltRange(_state.value.altRangeK)
+        if (new.showMetars && !old.showMetars) _state.value.pin?.let { loadMetars(it) }
         if (old.modelIds != new.modelIds || old.ceilingFt != new.ceilingFt) {
             _state.value.pin?.let { loadPin(it, announceOffline = false) }
             refreshSavedTimes()

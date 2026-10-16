@@ -310,6 +310,8 @@ fun WindsAloftApp(vm: MainViewModel) {
                 map.windOverlay.altitudesFt = state.altitudesFt
                 map.windOverlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
                 map.windOverlay.tempLabel = { c -> s.tempUnit.format(c) }
+                map.metarOverlay.stations = if (s.showMetars) state.metars else emptyList()
+                map.metarOverlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
                 it.invalidate()
             },
         )

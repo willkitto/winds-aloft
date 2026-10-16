@@ -72,6 +72,7 @@ class MapHandle(context: Context, initial: Camera?) {
     )
     val mapView = MapView(context, tiles)
     val windOverlay = WindOverlay(context.resources.displayMetrics.density)
+    val metarOverlay = MetarOverlay(context.resources.displayMetrics.density)
     val myLocation = MyLocationNewOverlay(GpsMyLocationProvider(context), mapView)
 
     /** Screen areas covered by panels (search bar, controls...), used to place the chart in the clear part. */
@@ -103,6 +104,7 @@ class MapHandle(context: Context, initial: Camera?) {
         }))
         // Two-finger rotation; the compass button turns the map back to north-up.
         mapView.overlays.add(RotationGestureOverlay(mapView).apply { isEnabled = true })
+        mapView.overlays.add(metarOverlay)
         mapView.overlays.add(windOverlay)
         myLocation.isDrawAccuracyEnabled = true
         mapView.overlays.add(myLocation)

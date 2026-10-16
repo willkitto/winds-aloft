@@ -50,6 +50,14 @@ import java.io.File
 class ScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
+    /** Two made-up airport reports around Boulder: one gusty, one variable. */
+    private fun sampleMetars(now: Long) = listOf(
+        dev.windsaloft.data.Metar("KBJC", "Rocky Mountain Metro, CO, US", LatLon(39.909, -105.117), now - 1500, 300, 22, 39, 18.0,
+            "METAR KBJC 160153Z 30022G39KT 10SM FEW120 18/M02 A2990"),
+        dev.windsaloft.data.Metar("KBDU", "Boulder Muni, CO, US", LatLon(40.039, -105.226), now - 2400, null, 4, null, 19.0,
+            "METAR KBDU 160135Z VRB04KT 10SM CLR 19/M03 A2991"),
+    )
+
     private val outDir = File(System.getProperty("screenshot.dir") ?: "build/screenshots").apply { mkdirs() }
 
     /** Veering, strengthening winds with height — a typical post-frontal profile. */
@@ -117,6 +125,7 @@ class ScreenshotTest {
             pinFetchedAtMs = System.currentTimeMillis() - 4 * 60_000, nowHourEpoch = now,
             hourOffset = 3, altRangeK = 4..14,
             chartAt = chartOffset?.let { LatLon(pin.lat + it.lat, pin.lon + it.lon) }, pendingPin = pending,
+            metars = if (expanded) sampleMetars(System.currentTimeMillis() / 1000) else emptyList(),
         )
         val profiles = buildProfiles(state)
 
@@ -144,6 +153,8 @@ class ScreenshotTest {
                         map.windOverlay.anchor = settings.arrowAnchor
                         map.windOverlay.showDirection = settings.showDirection
                         map.windOverlay.showSpeed = settings.showSpeed
+                        map.metarOverlay.stations = state.metars
+                        map.metarOverlay.speedLabel = { ms -> Format.speed(ms, settings.unit) }
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
                     CompassButton(rotation, {}, Modifier.align(Alignment.TopEnd).padding(top = 76.dp, end = 16.dp))
@@ -201,12 +212,14 @@ class ScreenshotTest {
         val dz = dev.windsaloft.data.SavedPlace("Skydive Boulder", pin, 0)
         vm.replaceStateForTest {
             it.copy(
-                settings = Settings(), pin = pin, pinLabel = dz.name,
+                pin = pin, pinLabel = dz.name,
                 pinForecasts = mapOf(Settings().primaryModelId to syntheticPoint(pin, 1580.0, now, 0.0)),
                 pinFetchedAtMs = System.currentTimeMillis() - 2 * 3600_000L, nowHourEpoch = now, hourOffset = 3, altRangeK = 4..14,
-                favorites = listOf(dz), online = false,
+                favorites = listOf(dz), online = false, metars = sampleMetars(System.currentTimeMillis() / 1000),
+                settings = Settings(showDirection = true),
             )
         }
+        vm.saveCamera(Camera(LatLon(40.0, -105.2), 10.0))
         compose.setContent { WindsAloftTheme { WindsAloftApp(vm) } }
         repeat(8) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500)); compose.mainClock.advanceTimeBy(500) }
         compose.waitForIdle()

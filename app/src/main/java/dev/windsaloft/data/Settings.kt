@@ -72,6 +72,8 @@ data class Settings(
     val showSpeed: Boolean = true,
     val glyph: Glyph = Glyph.ARROW,
     val chartOrientation: ChartOrientation = ChartOrientation.LONGEST,
+    /** Show the latest reports (METARs) from airports near the forecast spot. */
+    val showMetars: Boolean = true,
 ) {
     val primaryModelId: String get() = modelIds.first()
     val comparing: Boolean get() = modelIds.size > 1
@@ -109,6 +111,7 @@ class Prefs(context: Context) {
             showSpeed = sp.getBoolean("showSpeed", d.showSpeed),
             glyph = enumOr(sp.getString("glyph", null), d.glyph),
             chartOrientation = enumOr(sp.getString("chartOrientation", null), d.chartOrientation),
+            showMetars = sp.getBoolean("showMetars", d.showMetars),
         )
     }
 
@@ -128,6 +131,7 @@ class Prefs(context: Context) {
         .putBoolean("showSpeed", s.showSpeed)
         .putString("glyph", s.glyph.name)
         .putString("chartOrientation", s.chartOrientation.name)
+        .putBoolean("showMetars", s.showMetars)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {

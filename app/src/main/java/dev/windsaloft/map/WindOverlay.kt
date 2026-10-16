@@ -233,7 +233,26 @@ class WindOverlay(private val density: Float) : Overlay() {
         val rows = columns.maxOf { it.winds.size }
         if (rows == 0) return
         // Fixed row spacing: panels opening over the map cover the columns instead of shrinking them.
-        val cell = ROW_DP * density
+        val unit = ROW_DP * density
+        // A sideways chart (phone turned) keeps its text upright, stacked in a short block beside each
+        // symbol; rows are spaced a little wider when needed so neighbouring blocks don't touch.
+        val upright = Math.floorMod(Math.round(chartTurn), 180) == 90
+        val textSize = (unit * 0.36f).coerceIn(10f * density, 15f * density)
+        val tempSize = textSize * 0.86f
+        fun width(s: String, size: Float): Float { text.textSize = size; return text.measureText(s) }
+        fun lineH(size: Float) = size * 1.2f
+        // The ground row also shows gusts, "12 (25)": reserve room for that whenever there is a ground row.
+        val hasSurface = columns.any { c -> c.winds.any { it?.surface == true } }
+        val cell = if (!upright) unit else maxOf(
+            unit,
+            listOfNotNull(
+                if (showDirection) width("888°", textSize) else null,
+                if (showSpeed) width("888", textSize) else null,
+                if (showSpeed && hasSurface) width("(88)", textSize) else null,
+                if (showTemperature) width("-88F", tempSize) else null,
+                width("14k", textSize),
+            ).max() + 12 * density,
+        )
         // Rows below the terrain (MSL altitudes under the ground) are left out, so the column starts at the pin.
         val skip = (0 until rows).firstOrNull { i -> columns.any { it.winds.getOrNull(i) != null } } ?: return
         fun rowY(i: Int) = y - cell * (i - skip + 0.5f)
@@ -243,29 +262,33 @@ class WindOverlay(private val density: Float) : Overlay() {
         fun altY(ft: Int) = y - cell * ((ft - loShown) / 1000f + 0.5f)
         val top = y - cell * (rows - skip)
 
-        val textSize = (cell * 0.36f).coerceIn(10f * density, 15f * density)
-        val tempSize = textSize * 0.86f
         textHalo.strokeWidth = 3.5f * density
-        val stroke = (cell * 0.085f).coerceIn(2.4f * density, 4.2f * density)
-        val labelEvery = ceil(textSize * 1.15f / cell).toInt().coerceAtLeast(1)
+        val stroke = (unit * 0.085f).coerceIn(2.4f * density, 4.2f * density)
+        val labelEvery = if (upright) 1 else ceil(textSize * 1.15f / cell).toInt().coerceAtLeast(1)
         val comparing = columns.size > 1
-        fun width(s: String, size: Float): Float { text.textSize = size; return text.measureText(s) }
 
         // Fixed geometry, independent of the forecast, so nothing moves as the time changes: each
         // column reserves the farthest a windsock arrow could reach in any direction, then a label slot.
         val lenScale = if (comparing) COMPARE_LENGTH else STACK_LENGTH
-        val reach = (if (anchor == ArrowAnchor.CENTRE) cell * lenScale / 2 else cell * lenScale) + stroke * 1.5f + density
+        val reach = (if (anchor == ArrowAnchor.CENTRE) unit * lenScale / 2 else unit * lenScale) + stroke * 1.5f + density
         // Sized for the widest possible text, so the slot never changes with the numbers.
-        // The ground row also shows gusts, "12 (25)": reserve room for that whenever there is a ground row.
-        val hasSurface = columns.any { c -> c.winds.any { it?.surface == true } }
         val speedTemplate = if (hasSurface) "88 (88)" else "888"
         val topTemplate = listOfNotNull(if (showDirection) "888°" else null, if (showSpeed) speedTemplate else null).joinToString(" ")
         val topW = if (topTemplate.isEmpty()) 0f else width(topTemplate, textSize)
         val tempW = if (showTemperature) width("-88F", tempSize) else 0f
-        val labelW = if (topW == 0f && tempW == 0f) 0f else maxOf(topW, tempW) + 6 * density
+        // Upright text stacks its lines across the column instead: direction, speed, gust, temperature.
+        val uprightLines = listOfNotNull(
+            if (showDirection) textSize else null, if (showSpeed) textSize else null,
+            if (showSpeed && hasSurface) textSize else null, if (showTemperature) tempSize else null,
+        )
+        val labelW = when {
+            upright -> if (uprightLines.isEmpty()) 0f else uprightLines.sumOf { lineH(it).toDouble() }.toFloat() + 6 * density
+            topW == 0f && tempW == 0f -> 0f
+            else -> maxOf(topW, tempW) + 6 * density
+        }
         val gap = 4 * density
         val colW = 2 * reach + labelW + gap
-        val altW = width("14k", textSize) + 12 * density
+        val altW = if (upright) lineH(textSize) + 12 * density else width("14k", textSize) + 12 * density
         val blockW = altW + columns.size * colW - gap
         val cx0 = if (comparing) x - blockW / 2 + altW + reach else x // one column sits on the pin
         fun cxOf(j: Int) = cx0 + j * colW
@@ -288,7 +311,13 @@ class WindOverlay(private val density: Float) : Overlay() {
                 cloudStroke.strokeWidth = 1.2f * density
                 c.drawRoundRect(rect, 6 * density, 6 * density, cloudFill)
                 c.drawRoundRect(rect, 6 * density, 6 * density, cloudStroke)
-                if (!comparing) {
+                if (!comparing && upright) {
+                    val depth = lineH(textSize * 0.9f) + lineH(textSize * 0.8f)
+                    drawUpright(c, blockRight + 8 * density + depth / 2, (yb + yt) / 2, listOf(
+                        Triple(layer.cover.name, textSize * 0.9f, 0xFFFFFFFF.toInt()),
+                        Triple("${shortFt(layer.baseFt)}–${shortFt(layer.topFt)}", textSize * 0.8f, 0xFFE6EEF5.toInt()),
+                    ))
+                } else if (!comparing) {
                     val mid = (yb + yt) / 2
                     text.textSize = textSize * 0.9f; textHalo.textSize = textSize * 0.9f
                     drawText(c, layer.cover.name, blockRight + 8 * density, mid - 2 * density, Paint.Align.LEFT, 0xFFFFFFFF.toInt())
@@ -320,11 +349,24 @@ class WindOverlay(private val density: Float) : Overlay() {
                 val cy = rowY(i)
                 val color = colorFor(w, col)
                 val kt = w.speedMs * KT_PER_MS
-                drawGlyph(c, cx, cy, w, cell * lenScale, cell * 0.16f, stroke, color, anchor)
+                drawGlyph(c, cx, cy, w, unit * lenScale, unit * 0.16f, stroke, color, anchor)
                 if (i % labelEvery != 0 && !w.surface) return@forEachIndexed
                 // Label slot: direction + speed on top, temperature underneath, always at the same spot.
                 val lx = cx + reach + 4 * density
                 val hasTemp = showTemperature && w.tempC != null
+                val tint = if (colorMode == ArrowColor.TEMPERATURE) 0xFFFFFFFF.toInt() else w.tempC?.let { temperatureTint(it) } ?: 0
+                if (upright) {
+                    val lines = listOfNotNull(
+                        if (showDirection) Triple("%03d°".format(Math.round(w.dirFromDeg).toInt() % 360), textSize, 0xFFFFFFFF.toInt()) else null,
+                        if (showSpeed) Triple(speedLabel(w.speedMs), textSize, 0xFFFFFFFF.toInt()) else null,
+                        if (showSpeed && w.gustMs != null) Triple("(${speedLabel(w.gustMs)})", textSize, 0xFFFFFFFF.toInt()) else null,
+                        if (hasTemp) Triple(tempLabel(w.tempC!!), tempSize, tint) else null,
+                    )
+                    // Each block starts at the edge nearest the column line, so blocks of different heights line up.
+                    val blockH = lines.sumOf { lineH(it.second).toDouble() }.toFloat()
+                    drawUpright(c, cx + reach + 4 * density + blockH / 2, cy, lines)
+                    return@forEachIndexed
+                }
                 val topLine = listOfNotNull(
                     if (showDirection) "%03d°".format(Math.round(w.dirFromDeg).toInt() % 360) else null,
                     if (showSpeed) speedLabel(w.speedMs) + (w.gustMs?.let { " (${speedLabel(it)})" } ?: "") else null,
@@ -335,28 +377,40 @@ class WindOverlay(private val density: Float) : Overlay() {
                 }
                 if (hasTemp) {
                     text.textSize = tempSize; textHalo.textSize = tempSize
-                    val tint = if (colorMode == ArrowColor.TEMPERATURE) 0xFFFFFFFF.toInt() else temperatureTint(w.tempC!!)
-                    drawText(c, tempLabel(w.tempC), lx, if (topLine.isEmpty()) cy + tempSize * 0.36f else cy + tempSize + density, Paint.Align.LEFT, tint)
+                    drawText(c, tempLabel(w.tempC!!), lx, if (topLine.isEmpty()) cy + tempSize * 0.36f else cy + tempSize + density, Paint.Align.LEFT, tint)
                 }
             }
-            if (col.label != null) {
+            if (col.label != null && upright) {
+                drawUpright(c, (colL(j) + colR(j)) / 2, top - 6 * density - width(col.label, textSize) / 2,
+                    listOf(Triple(col.label, textSize, col.color ?: 0xFFFFFFFF.toInt())))
+            } else if (col.label != null) {
                 text.textSize = textSize; textHalo.textSize = textSize
                 drawText(c, col.label, cx + labelW / 2, top - 6 * density, Paint.Align.CENTER, col.color ?: 0xFFFFFFFF.toInt())
             }
         }
 
         // Out-of-range cloud markers: stacked upward above the columns, downward below the pin.
+        // Upright pills lie along the chart, so each takes its own length there instead of its height.
         val pillH = textSize + 8 * density
+        val markerSize = textSize * 0.82f
+        fun pillAlong(label: String): Float { markerText.textSize = markerSize; return if (upright) markerText.measureText(label) + 14 * density else pillH }
+        val labelAlong = if (!comparing) 0f else if (upright) columns.maxOf { col -> col.label?.let { width(it, textSize) } ?: 0f } else textSize
         above.groupBy { it.first }.forEach { (j, list) ->
-            list.forEachIndexed { n, (_, layer) ->
-                val yc = top - (if (comparing) textSize + 12 * density else 8 * density) - pillH / 2 - n * (pillH + 3 * density)
-                drawCloudMarker(c, (colL(j) + colR(j)) / 2, yc, "▲ ${layer.cover.name} ${shortFt(layer.baseFt)}–${shortFt(layer.topFt)}", layer.cover, textSize * 0.82f, pillH)
+            var edge = top - (if (comparing) labelAlong + 12 * density else 8 * density)
+            list.forEach { (_, layer) ->
+                val label = "▲ ${layer.cover.name} ${shortFt(layer.baseFt)}–${shortFt(layer.topFt)}"
+                val len = pillAlong(label)
+                drawCloudMarker(c, (colL(j) + colR(j)) / 2, edge - len / 2, label, layer.cover, markerSize, pillH, upright)
+                edge -= len + 3 * density
             }
         }
         below.groupBy { it.first }.forEach { (j, list) ->
-            list.forEachIndexed { n, (_, layer) ->
-                val yc = y + 12 * density + pillH / 2 + n * (pillH + 3 * density)
-                drawCloudMarker(c, (colL(j) + colR(j)) / 2, yc, "▼ ${layer.cover.name} ${shortFt(layer.baseFt)}–${shortFt(layer.topFt)}", layer.cover, textSize * 0.82f, pillH)
+            var edge = y + 12 * density
+            list.forEach { (_, layer) ->
+                val label = "▼ ${layer.cover.name} ${shortFt(layer.baseFt)}–${shortFt(layer.topFt)}"
+                val len = pillAlong(label)
+                drawCloudMarker(c, (colL(j) + colR(j)) / 2, edge + len / 2, label, layer.cover, markerSize, pillH, upright)
+                edge += len + 3 * density
             }
         }
 
@@ -368,7 +422,8 @@ class WindOverlay(private val density: Float) : Overlay() {
             if (i % labelEvery != 0 && i != surfaceRow) continue
             val alt = rowAlt(i) ?: continue
             val label = if (alt == 0 || i == surfaceRow) "SFC" else if (alt % 1000 == 0) "${alt / 1000}k" else "$alt"
-            drawText(c, label, altX, rowY(i) + textSize * 0.36f, Paint.Align.RIGHT, 0xFFFFFFFF.toInt())
+            if (upright) drawUpright(c, colL(0) - altW / 2 + 3 * density, rowY(i), listOf(Triple(label, textSize, 0xFFFFFFFF.toInt())))
+            else drawText(c, label, altX, rowY(i) + textSize * 0.36f, Paint.Align.RIGHT, 0xFFFFFFFF.toInt())
         }
         // When MSL rows were dropped, the ground is at the pin: mark it (unless the ground-wind row already does).
         if (skip > 0 && surfaceRow != skip) {
@@ -377,12 +432,19 @@ class WindOverlay(private val density: Float) : Overlay() {
             staffHalo.strokeWidth = 4f * density
             c.drawLine(colL(0), y, blockRight, y, staffHalo)
             c.drawLine(colL(0), y, blockRight, y, ground)
-            drawText(c, "GND", altX, y + textSize * 0.36f, Paint.Align.RIGHT, 0xFFFFFFFF.toInt())
+            if (upright) drawUpright(c, colL(0) - altW / 2 + 3 * density, y, listOf(Triple("GND", textSize, 0xFFFFFFFF.toInt())))
+            else drawText(c, "GND", altX, y + textSize * 0.36f, Paint.Align.RIGHT, 0xFFFFFFFF.toInt())
         }
     }
 
     /** A small pill naming a cloud layer that lies outside the shown altitudes. */
-    private fun drawCloudMarker(c: Canvas, cx: Float, yc: Float, label: String, cover: CloudCover, size: Float, h: Float) {
+    private fun drawCloudMarker(c: Canvas, cx: Float, yc: Float, label: String, cover: CloudCover, size: Float, h: Float, upright: Boolean = false) {
+        if (upright) {
+            c.save(); c.rotate(-chartTurn, cx, yc)
+            drawCloudMarker(c, cx, yc, label, cover, size, h)
+            c.restore()
+            return
+        }
         markerText.textSize = size
         val w = markerText.measureText(label) + 14 * density
         rect.set(cx - w / 2, yc - h / 2, cx + w / 2, yc + h / 2)
@@ -515,6 +577,23 @@ class WindOverlay(private val density: Float) : Overlay() {
     }
 
     // ---------------------------------------------------------------- Primitives
+
+    /**
+     * Lines of text centred on ([x], [y]) in the chart's frame but drawn level on screen, for a chart
+     * that has been turned sideways. Each line is (text, size, colour), stacked top to bottom.
+     */
+    private fun drawUpright(c: Canvas, x: Float, y: Float, lines: List<Triple<String, Float, Int>>) {
+        if (lines.isEmpty()) return
+        c.save()
+        c.rotate(-chartTurn, x, y)
+        var lineTop = y - lines.sumOf { it.second * 1.2 }.toFloat() / 2
+        for ((s, size, color) in lines) {
+            text.textSize = size; textHalo.textSize = size
+            drawText(c, s, x, lineTop + size * 0.6f + size * 0.36f, Paint.Align.CENTER, color)
+            lineTop += size * 1.2f
+        }
+        c.restore()
+    }
 
     private fun drawText(c: Canvas, s: String, tx: Float, ty: Float, align: Paint.Align, color: Int) {
         text.textAlign = align

@@ -40,6 +40,12 @@ Phone turned on its side (default *Along the long side*): the chart keeps runnin
 - **Turning the phone**: the map stays exactly where it is on the glass. The screen turns so panels, text and the keyboard are the right way up, and the map is turned back by the same amount; the compass then shows north is sideways, and tapping it makes the map north-up for the new way you're holding the phone. In landscape the panels move to a column down one side. Settings → *Chart direction* picks how the chart runs:
   - *Along the long side* (default): turned sideways, the chart keeps running along the phone toward its top edge, as if the phone were still upright, which uses the most room.
   - *Always vertical* or *Always horizontal*, whichever way the phone is held.
+  - When the chart runs sideways, its text stays level and readable: each altitude's direction, speed, gust and temperature stack in a short block beside its symbol. The rows spread a little wider to make room.
+- **Nearby airports, observed now**: the latest reports (METARs) from the airports nearest the forecast spot, from aviationweather.gov.
+  - On the map, each airport gets a windsock arrow and its wind, e.g. "KSNA 22 (39)": 22 sustained, gusting 39.
+  - The location panel shows the nearest airport on one line. Expanded, it lists up to four airports with distance, wind, temperature, report age and the raw METAR.
+  - Reports refresh with the forecast, and on return to the app when they're over 10 minutes old. The last ones are kept for offline use.
+  - Settings → *Observed winds* turns them off.
 - **Saved places**: tap ☆ on a spot's panel to save it (favourites), and use the places button in the search bar to jump back to one. Saved places can be renamed. There is also a separate history of the last 20 spots you looked at.
 - **Offline (e.g. in the plane)**:
   - The winds for every saved place and recent spot are kept on the phone, so they still show with no signal. The panel says *Offline* and how old they are.

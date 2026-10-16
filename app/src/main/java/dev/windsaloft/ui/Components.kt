@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.windsaloft.UiState
 import dev.windsaloft.data.MapLayer
+import dev.windsaloft.data.Metars
 import dev.windsaloft.data.OpenMeteo
 import dev.windsaloft.data.Place
 import dev.windsaloft.data.Settings
@@ -422,6 +423,18 @@ fun PinPanel(
                     if (!state.online) add("Offline")
                 }.joinToString(" · ")
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                state.metars.firstOrNull()?.takeIf { s.showMetars }?.let { m ->
+                    // What the nearest airport is actually reporting right now, gusts included.
+                    Text(
+                        "✈ ${m.icao} ${Format.distance(Metars.distanceKm(pin, m.location), s.unit)} ${Metars.bearingPoint(pin, m.location)}: " +
+                            "${Format.metarWind(m, s.unit)} · ${Format.age(m.obsTimeSec * 1000).removeSuffix(" ago")}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (s.showClouds && profiles.isNotEmpty()) {
                     // Exact layer bases and tops, readable even with the table closed.
                     // One line per model when comparing (so a long list can't push the next model out of view).
@@ -462,6 +475,7 @@ fun PinPanel(
                 Modifier.padding(16.dp),
                 style = MaterialTheme.typography.bodyMedium,
             )
+            MetarSection(state)
             return@Card
         }
         if (s.comparing) {
@@ -474,6 +488,38 @@ fun PinPanel(
             ProfileHeader(s.unit)
             LazyColumn(Modifier.heightIn(max = 200.dp)) {
                 items(profiles.first().winds.asReversed(), key = { it.first }) { (ft, w) -> ProfileRow(ft, w, s) }
+            }
+        }
+        MetarSection(state)
+    }
+}
+
+/** Latest reports from nearby airports: what's observed now, next to what the models forecast. */
+@Composable
+private fun MetarSection(state: UiState) {
+    val s = state.settings
+    val pin = state.pin ?: return
+    if (!s.showMetars || state.metars.isEmpty()) return
+    HorizontalDivider()
+    Column(Modifier.heightIn(max = 170.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp)) {
+        Text("Nearby airports, observed", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        state.metars.take(4).forEach { m ->
+            Column(Modifier.padding(top = 6.dp)) {
+                Text(
+                    "${m.icao} · ${Format.distance(Metars.distanceKm(pin, m.location), s.unit)} ${Metars.bearingPoint(pin, m.location)} · " +
+                        "${Format.metarWind(m, s.unit)}" + (m.tempC?.let { " · " + s.tempUnit.format(it) } ?: "") +
+                        " · ${Format.age(m.obsTimeSec * 1000)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (m.name.isNotEmpty()) Text(m.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    m.raw,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -727,6 +773,17 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                         FilterChip(settings.tempUnit == u, { onChange(settings.copy(tempUnit = u)) }, label = { Text(u.label) })
                     }
                 }
+                Section("Observed winds")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(settings.showMetars, { onChange(settings.copy(showMetars = !settings.showMetars)) },
+                        label = { Text("Nearby airport reports (METAR)") })
+                }
+                Text(
+                    "The latest reports from airports near the forecast spot: the wind actually blowing at the ground now, " +
+                        "with gusts in brackets, on the map and in the location panel.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Section("Cloud layers")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(settings.showClouds, { onChange(settings.copy(showClouds = !settings.showClouds)) },

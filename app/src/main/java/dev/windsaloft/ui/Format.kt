@@ -26,6 +26,21 @@ object Format {
 
     fun speed(ms: Double, unit: SpeedUnit): String = (ms * unit.perMs).roundToInt().toString()
 
+    /** Distance in the unit that goes with the speed unit: nautical miles with knots, miles with mph. */
+    fun distance(km: Double, unit: SpeedUnit): String = when (unit) {
+        SpeedUnit.KT -> "${(km / 1.852).roundToInt()} nm"
+        SpeedUnit.MPH -> "${(km / 1.609344).roundToInt()} mi"
+        else -> "${km.roundToInt()} km"
+    }
+
+    /** An airport report's wind: "030° 22 (39) kt", "VRB 3 kt" or "Calm". */
+    fun metarWind(m: dev.windsaloft.data.Metar, unit: SpeedUnit): String {
+        if (m.calm) return "Calm"
+        val ms = { kt: Int -> kt / dev.windsaloft.wind.KT_PER_MS }
+        return (m.dirDeg?.let { String.format(Locale.US, "%03d°", it % 360) } ?: "VRB") + " " +
+            speed(ms(m.speedKt), unit) + (m.gustKt?.let { " (${speed(ms(it), unit)})" } ?: "") + " " + unit.label
+    }
+
     fun direction(deg: Double): String = String.format(Locale.US, "%03d°", deg.roundToInt() % 360)
 
     fun coords(p: LatLon): String {
