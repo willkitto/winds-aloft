@@ -128,4 +128,19 @@ class WindMathTest {
         // No cloud data at all -> null, not "clear".
         assertNull(ForecastPoint(LatLon(0.0, 0.0), ground, longArrayOf(0L), listOf(emptyList())).cloudLayers(0L, AltitudeRef.MSL, 0, 18_000))
     }
+
+    @Test
+    fun temperatureRampIsBlueAtFreezingAndBlackAtMinus40() {
+        val colors = dev.windsaloft.map.AltitudeColors
+        assertEquals(0xFF2F7BFF.toInt(), colors.temperature(0.0))
+        assertEquals(0xFF000000.toInt(), colors.temperature(-40.0))
+        assertEquals(0xFF000000.toInt(), colors.temperature(-55.0)) // clamps below -40
+        // Colder than freezing gets steadily darker.
+        fun lum(c: Int) = 0.2126 * ((c shr 16) and 0xFF) + 0.7152 * ((c shr 8) and 0xFF) + 0.0722 * (c and 0xFF)
+        val darkening = (0 downTo -40 step 5).map { lum(colors.temperature(it.toDouble())) }
+        assertTrue(darkening.zipWithNext().all { (a, b) -> b < a })
+        // Very dark symbols get a light outline so they stay visible.
+        assertEquals(0xCCFFFFFF.toInt(), colors.haloFor(colors.temperature(-35.0)))
+        assertEquals(0xAA000000.toInt(), colors.haloFor(colors.temperature(20.0)))
+    }
 }

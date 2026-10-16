@@ -94,7 +94,18 @@ class ScreenshotTest {
 
     private val compareSettings = Settings(modelIds = listOf("ncep_gfs_seamless", "ecmwf_ifs025", "icon_seamless"))
 
-    private fun render(name: String, settings: Settings, expanded: Boolean) {
+    @Test
+    fun renderDetachedChartTemperature() = render(
+        "detached_temperature", Settings(arrowColor = dev.windsaloft.data.ArrowColor.TEMPERATURE), expanded = true,
+        chartOffset = LatLon(0.06, -0.16), pending = LatLon(40.02, -104.95),
+    )
+
+    @Test
+    fun renderRotatedMap() = render("rotated", Settings(), expanded = false, rotation = 40f)
+
+    private fun render(
+        name: String, settings: Settings, expanded: Boolean, chartOffset: LatLon? = null, pending: LatLon? = null, rotation: Float = 0f,
+    ) {
         Configuration.getInstance().userAgentValue = "dev.windsaloft.test"
         val now = currentHourEpoch()
         val pin = LatLon(40.10, -105.20)
@@ -104,6 +115,7 @@ class ScreenshotTest {
             settings = settings, pin = pin, pinLabel = "Boulder, Colorado", pinForecasts = pinForecasts,
             pinFetchedAtMs = System.currentTimeMillis() - 4 * 60_000, nowHourEpoch = now,
             hourOffset = 3, altRangeK = 4..14,
+            chartAt = chartOffset?.let { LatLon(pin.lat + it.lat, pin.lon + it.lon) }, pendingPin = pending,
         )
         val profiles = buildProfiles(state)
 
@@ -116,6 +128,8 @@ class ScreenshotTest {
                     AndroidView(factory = {
                         map.setLayer(settings.layer)
                         map.windOverlay.location = pin
+                        map.windOverlay.chartLocation = state.chartAt
+                        map.windOverlay.pendingLocation = state.pendingPin
                         map.windOverlay.columns = buildColumns(state, profiles)
                         map.windOverlay.ceilingFt = settings.ceilingFt
                         map.windOverlay.layout = settings.arrowLayout
@@ -130,6 +144,7 @@ class ScreenshotTest {
                         map.windOverlay.showSpeed = settings.showSpeed
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
+                    CompassButton(rotation, {}, Modifier.align(Alignment.TopEnd).padding(top = 76.dp, end = 16.dp))
                     SearchBar(
                         emptyList(), {}, {}, {}, {},
                         Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth()
@@ -157,6 +172,11 @@ class ScreenshotTest {
             map.mapView.height / 2 + (map.mapView.projection.toPixels(org.osmdroid.util.GeoPoint(pin.lat, pin.lon), null).y -
                 (map.panelsTopPx - (28 * map.mapView.resources.displayMetrics.density).toInt())),
         ))
+        if (rotation != 0f) {
+            // Rotate about the forecast spot, a little below the middle so the chart fits above it.
+            map.mapView.controller.setCenter(org.osmdroid.util.GeoPoint(pin.lat + 0.08, pin.lon))
+            map.mapView.mapOrientation = rotation
+        }
         repeat(10) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idle(); map.mapView.invalidate() }
         compose.waitForIdle()
         val root = map.mapView.rootView

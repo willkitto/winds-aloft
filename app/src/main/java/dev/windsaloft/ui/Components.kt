@@ -1,6 +1,12 @@
 package dev.windsaloft.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.material3.Button
+import androidx.compose.ui.graphics.toArgb
+import dev.windsaloft.map.WindColors
 import dev.windsaloft.data.Glyph
 import dev.windsaloft.data.ArrowAnchor
 import dev.windsaloft.wind.CloudLayer
@@ -163,6 +169,42 @@ fun SearchBar(
 
 // ---------------------------------------------------------------- Time + altitude controls
 
+/** Forecast time label + slider; shared by the full controls and the time-only card. */
+@Composable
+private fun TimeControl(state: UiState, onHourOffset: (Int) -> Unit) {
+    LabelRow("Forecast", "${Format.time(state.selectedEpoch)}  (+${state.hourOffset} h)")
+    Slider(
+        value = state.hourOffset.toFloat(),
+        onValueChange = { onHourOffset(it.roundToInt()) },
+        valueRange = 0f..state.maxHourOffset.coerceAtLeast(1).toFloat(),
+        modifier = Modifier.height(36.dp),
+    )
+}
+
+/** Only the forecast-time slider, for stepping through hours with the map otherwise clear. */
+@Composable
+fun TimeOnlyCard(state: UiState, onHourOffset: (Int) -> Unit, modifier: Modifier = Modifier) {
+    Card(modifier, shape = PanelShape, colors = panelColors(), elevation = CardDefaults.cardElevation(6.dp)) {
+        if (state.pinLoading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp)) else Spacer(Modifier.height(2.dp))
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 2.dp)) { TimeControl(state, onHourOffset) }
+    }
+}
+
+/** Asks before moving the forecast spot to a long-pressed location. */
+@Composable
+fun ConfirmSpotCard(location: dev.windsaloft.wind.LatLon, onConfirm: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+    Card(modifier, shape = PanelShape, colors = panelColors(), elevation = CardDefaults.cardElevation(6.dp)) {
+        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Get winds here?", style = MaterialTheme.typography.titleSmall)
+                Text(Format.coords(location), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            Button(onClick = onConfirm) { Text("Get winds") }
+        }
+    }
+}
+
 @Composable
 fun ControlsCard(
     state: UiState,
@@ -180,13 +222,7 @@ fun ControlsCard(
             Spacer(Modifier.height(2.dp))
         }
         Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 6.dp)) {
-            LabelRow("Forecast", "${Format.time(state.selectedEpoch)}  (+${state.hourOffset} h)")
-            Slider(
-                value = state.hourOffset.toFloat(),
-                onValueChange = { onHourOffset(it.roundToInt()) },
-                valueRange = 0f..state.maxHourOffset.coerceAtLeast(1).toFloat(),
-                modifier = Modifier.height(36.dp),
-            )
+            TimeControl(state, onHourOffset)
             val lo = state.altRangeK.first * 1000
             val hi = state.altRangeK.last * 1000
             LabelRow("Altitude", "${Format.feet(lo)} – ${Format.feet(hi)} ft ${s.altitudeRef.name}")
@@ -198,8 +234,8 @@ fun ControlsCard(
             )
             when {
                 s.arrowColor == ArrowColor.TEMPERATURE -> ColorScale(
-                    stops = (0..20).map { Color(AltitudeColors.temperature(-40.0 + 75.0 * it / 20)) },
-                    labels = listOf(-40.0, -15.0, 10.0, 35.0).map { s.tempUnit.format(it) },
+                    stops = (0..32).map { Color(AltitudeColors.temperature(-40.0 + 80.0 * it / 32)) },
+                    labels = listOf(-40.0, -20.0, 0.0, 20.0, 40.0).map { s.tempUnit.format(it) },
                 )
                 s.arrowColor == ArrowColor.SPEED -> ColorScale(
                     stops = (0..20).map { Color(AltitudeColors.speed(50.0 * it / 20)) },
@@ -355,6 +391,8 @@ fun PinPanel(
     expanded: Boolean,
     onToggle: () -> Unit,
     onClose: () -> Unit,
+    /** Shown when the chart has been dragged away from the forecast spot. */
+    onReattach: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val s = state.settings
@@ -399,6 +437,9 @@ fun PinPanel(
                 modifier = Modifier.padding(start = 8.dp),
             )
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Remove pin") }
+        }
+        if (onReattach != null) {
+            TextButton(onClick = onReattach, modifier = Modifier.padding(start = 6.dp)) { Text("Put the chart back on the forecast spot") }
         }
         if (!expanded) return@Card
         HorizontalDivider()
@@ -448,9 +489,11 @@ private fun altitudeText(ft: Int, s: Settings) = Format.feet(ft) + if (ft == 0 &
 
 @Composable
 private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
+    // Same colour as the symbol on the map, whatever the colour setting.
+    val rowColor = w?.let { Color(WindColors.of(s.arrowColor, it, null, s.ceilingFt)) } ?: altitudeColor(ft, s.ceilingFt)
     val num = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum")
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Canvas(Modifier.size(10.dp)) { drawCircle(altitudeColor(ft, s.ceilingFt)) }
+        Canvas(Modifier.size(10.dp)) { drawCircle(rowColor) }
         Spacer(Modifier.width(8.dp))
         Text(altitudeText(ft, s), Modifier.width(ColAlt), style = num, maxLines = 1)
         if (w == null) {
@@ -462,7 +505,7 @@ private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
             return@Row
         }
         Row(Modifier.width(ColDir), verticalAlignment = Alignment.CenterVertically) {
-            WindGlyph(w.dirFromDeg, altitudeColor(ft, s.ceilingFt))
+            WindGlyph(w.dirFromDeg, rowColor)
             Spacer(Modifier.width(6.dp))
             Text(Format.direction(w.dirFromDeg), style = num)
         }
@@ -505,7 +548,7 @@ private fun CompareRow(profiles: List<ModelProfile>, index: Int, s: Settings) {
                 if (w == null) {
                     Text("—", style = num, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
-                    WindGlyph(w.dirFromDeg, p.color, size = 12.dp)
+                    WindGlyph(w.dirFromDeg, Color(WindColors.of(s.arrowColor, w, p.color.toArgb(), s.ceilingFt)), size = 12.dp)
                     Spacer(Modifier.width(2.dp))
                     // Aviation-style "direction/speed", then temperature.
                     Text(
@@ -533,6 +576,25 @@ private fun CompareRow(profiles: List<ModelProfile>, index: Int, s: Settings) {
             fontWeight = if (big) FontWeight.Bold else FontWeight.Normal,
             color = if (big) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** Compass needle (red end = north on screen); tap to turn the map back to north-up. */
+@Composable
+fun CompassButton(rotation: Float, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    SmallFloatingActionButton(onClick = onClick, modifier = modifier.semantics { contentDescription = "North up" }) {
+        val south = MaterialTheme.colorScheme.onSurfaceVariant
+        Canvas(Modifier.size(26.dp)) {
+            // The map is rotated clockwise by [rotation], so north sits at that bearing on screen.
+            rotate(rotation) {
+                val cx = size.width / 2
+                val cy = size.height / 2
+                val half = size.height * 0.46f
+                val w = size.width * 0.2f
+                drawPath(Path().apply { moveTo(cx, cy - half); lineTo(cx - w, cy); lineTo(cx + w, cy); close() }, Color(0xFFE53935))
+                drawPath(Path().apply { moveTo(cx, cy + half); lineTo(cx - w, cy); lineTo(cx + w, cy); close() }, south)
+            }
+        }
     }
 }
 

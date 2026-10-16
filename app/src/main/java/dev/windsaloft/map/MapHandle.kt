@@ -13,6 +13,7 @@ import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
@@ -50,7 +51,8 @@ class MapHandle(context: Context, initial: Camera?) {
     var obscuredTopPx = 0
     var panelsTopPx = 0
 
-    var onTap: (LatLon) -> Unit = {}
+    /** Long-press: propose a new forecast spot (the user confirms before anything is fetched). */
+    var onLongPress: (LatLon) -> Unit = {}
 
     init {
         mapView.setMultiTouchControls(true)
@@ -62,14 +64,15 @@ class MapHandle(context: Context, initial: Camera?) {
         mapView.maxZoomLevel = 19.0
 
         mapView.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
-            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                onTap(LatLon(p.latitude, p.longitude)); return true
-            }
+            // A plain tap does nothing, so panning and zooming never move the forecast spot by accident.
+            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean = false
 
             override fun longPressHelper(p: GeoPoint): Boolean {
-                onTap(LatLon(p.latitude, p.longitude)); return true
+                onLongPress(LatLon(p.latitude, p.longitude)); return true
             }
         }))
+        // Two-finger rotation; the compass button turns the map back to north-up.
+        mapView.overlays.add(RotationGestureOverlay(mapView).apply { isEnabled = true })
         mapView.overlays.add(windOverlay)
         myLocation.isDrawAccuracyEnabled = true
         mapView.overlays.add(myLocation)
@@ -99,6 +102,11 @@ class MapHandle(context: Context, initial: Camera?) {
         if (kotlin.math.abs(px.x - targetX) < w / 10 && kotlin.math.abs(px.y - targetY) < margin) return
         val c = mapView.projection.fromPixels(w / 2 + (px.x - targetX), h / 2 + (px.y - targetY))
         mapView.controller.animateTo(c)
+    }
+
+    /** Animates the map back to north-up. */
+    fun resetNorth() {
+        mapView.controller.animateTo(mapView.mapCenter, mapView.zoomLevelDouble, 400L, 0f)
     }
 
     fun setLayer(layer: MapLayer) {

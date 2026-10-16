@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -53,6 +55,9 @@ import dev.windsaloft.map.attribution
 import dev.windsaloft.wind.LatLon
 import org.osmdroid.util.GeoPoint
 
+/** What the panels show: everything, only the forecast-time slider, or nothing. */
+enum class PanelMode { FULL, TIME_ONLY, HIDDEN }
+
 @Composable
 fun WindsAloftApp(vm: MainViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -62,10 +67,17 @@ fun WindsAloftApp(vm: MainViewModel) {
     var showSettings by remember { mutableStateOf(false) }
     // Collapsed by default so the arrow columns get most of the screen; tap the panel for the table.
     var profileExpanded by rememberSaveable { mutableStateOf(false) }
-    // One tap hides every panel so the whole map is free; the arrows never resize either way.
-    var panelsHidden by rememberSaveable { mutableStateOf(false) }
+    // The hide button steps through: all panels -> forecast time only -> nothing. The arrows never resize.
+    var panelModeName by rememberSaveable { mutableStateOf(PanelMode.FULL.name) }
+    val panelMode = PanelMode.valueOf(panelModeName)
+    fun setPanelMode(m: PanelMode) { panelModeName = m.name }
 
-    map.onTap = { vm.setPin(it) }
+    // Moving the forecast spot is deliberate: long-press proposes a spot, then the user confirms.
+    map.onLongPress = vm::proposePin
+    map.windOverlay.onChartMoved = vm::setChartAt
+    // Two-finger rotation turns the map; the compass shows north and resets it.
+    var mapRotation by remember { mutableFloatStateOf(0f) }
+    map.windOverlay.onRotation = { mapRotation = it }
 
     // ---- Location ----
     fun hasLocationPermission() =
@@ -153,6 +165,8 @@ fun WindsAloftApp(vm: MainViewModel) {
             update = {
                 map.setLayer(s.layer)
                 map.windOverlay.location = state.pin
+                map.windOverlay.chartLocation = state.chartAt
+                map.windOverlay.pendingLocation = state.pendingPin
                 map.windOverlay.columns = columns
                 map.windOverlay.ceilingFt = s.ceilingFt
                 map.windOverlay.layout = s.arrowLayout
@@ -171,7 +185,7 @@ fun WindsAloftApp(vm: MainViewModel) {
         )
 
         // Top: search
-        if (!panelsHidden) SearchBar(
+        if (panelMode == PanelMode.FULL) SearchBar(
             results = state.searchResults,
             onSearch = vm::search,
             onPick = vm::selectPlace,
@@ -196,13 +210,36 @@ fun WindsAloftApp(vm: MainViewModel) {
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (panelsHidden) {
+            state.pendingPin?.let { p ->
+                ConfirmSpotCard(
+                    location = p,
+                    onConfirm = vm::confirmPendingPin,
+                    onCancel = vm::cancelPendingPin,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (panelMode == PanelMode.HIDDEN) {
                 ExtendedFloatingActionButton(
-                    onClick = { panelsHidden = false },
+                    onClick = { setPanelMode(PanelMode.FULL) },
                     icon = { Icon(AppIcons.FullscreenExit, contentDescription = null) },
                     text = { Text("Show panels") },
                     modifier = Modifier.align(Alignment.End),
                 )
+                return@Column
+            }
+            if (panelMode == PanelMode.TIME_ONLY) {
+                // Just the forecast-time slider, so the map stays free while stepping through hours.
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TimeOnlyCard(state, vm::setHourOffset, Modifier.weight(1f))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.FULL) }) {
+                            Icon(AppIcons.FullscreenExit, contentDescription = "Show all panels")
+                        }
+                        SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.HIDDEN) }) {
+                            Icon(AppIcons.Fullscreen, contentDescription = "Hide the time slider too")
+                        }
+                    }
+                }
                 return@Column
             }
             Column(
@@ -210,8 +247,8 @@ fun WindsAloftApp(vm: MainViewModel) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End,
             ) {
-                SmallFloatingActionButton(onClick = { panelsHidden = true }) {
-                    Icon(AppIcons.Fullscreen, contentDescription = "Hide panels")
+                SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.TIME_ONLY) }) {
+                    Icon(AppIcons.Fullscreen, contentDescription = "Hide panels (keep the time slider)")
                 }
                 SmallFloatingActionButton(onClick = {
                     val next = MapLayer.entries[(s.layer.ordinal + 1) % MapLayer.entries.size]
@@ -233,6 +270,7 @@ fun WindsAloftApp(vm: MainViewModel) {
                     expanded = profileExpanded,
                     onToggle = { profileExpanded = !profileExpanded },
                     onClose = vm::clearPin,
+                    onReattach = if (state.chartAt != null) ({ vm.setChartAt(null) }) else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .onGloballyPositioned {
@@ -248,7 +286,7 @@ fun WindsAloftApp(vm: MainViewModel) {
                     modifier = Modifier.align(Alignment.CenterHorizontally),
                 ) {
                     Text(
-                        "Tap the map to see the winds aloft there",
+                        "Long-press the map to pick a forecast spot",
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                     )
@@ -264,6 +302,15 @@ fun WindsAloftApp(vm: MainViewModel) {
                     .onGloballyPositioned { if (state.pin == null) map.panelsTopPx = it.boundsInRoot().top.toInt() },
             )
         }
+
+        CompassButton(
+            rotation = mapRotation,
+            onClick = map::resetNorth,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(end = 16.dp, top = if (panelMode == PanelMode.FULL) 72.dp else 12.dp),
+        )
 
         SnackbarHost(
             snackbar,

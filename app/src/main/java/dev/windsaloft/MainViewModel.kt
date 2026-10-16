@@ -41,6 +41,10 @@ data class UiState(
     /** Selected altitude band, in thousands of feet. */
     val altRangeK: IntRange = 0..14,
     val searchResults: List<Place> = emptyList(),
+    /** A spot the user long-pressed, waiting for them to confirm before fetching its forecast. */
+    val pendingPin: LatLon? = null,
+    /** Where the wind chart is drawn when dragged away from the forecast spot (null = on the spot). */
+    val chartAt: LatLon? = null,
 ) {
     val selectedEpoch: Long get() = nowHourEpoch + hourOffset * 3600L
 
@@ -97,10 +101,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Pin (detailed profile) ----
 
     fun setPin(location: LatLon, label: String? = null) {
-        _state.update { it.copy(pin = location, pinLabel = label, pinForecasts = emptyMap(), searchResults = emptyList()) }
+        _state.update {
+            it.copy(pin = location, pinLabel = label, pinForecasts = emptyMap(), searchResults = emptyList(), pendingPin = null, chartAt = null)
+        }
         prefs.savePin(location, label)
         fetchPin()
     }
+
+    fun proposePin(location: LatLon) = _state.update { it.copy(pendingPin = location) }
+
+    fun cancelPendingPin() = _state.update { it.copy(pendingPin = null) }
+
+    fun confirmPendingPin() {
+        val p = _state.value.pendingPin ?: return
+        setPin(p)
+    }
+
+    /** Moves only the chart; the forecast spot (and its data) stay put. Null re-attaches it. */
+    fun setChartAt(location: LatLon?) = _state.update { it.copy(chartAt = location) }
 
     fun clearPin() {
         pinJob?.cancel()

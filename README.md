@@ -8,13 +8,15 @@ Upper-wind forecasts drawn on a map. The pinned location gets a column of arrows
   - *On the column line* (tail, nose or centre) overrides the symbol's default.
 - **Numbers**: beside each symbol, speed on top and temperature underneath, e.g. "-3C" or "27F". The ° sign is kept for compass directions. *Numbers on the map* can also add the direction the wind comes from ("270° 19"), and each number can be turned on or off.
 - **Altitude**: row position, labelled down the left side. The layout is fixed: rows have a set spacing, and each column reserves room for the longest possible arrow plus a speed/temperature slot. So nothing moves or resizes when you change the time or when panels open. Pan the map to see what's underneath, or hide all panels with one tap.
-- **Colour**: altitude by default, or the model when comparing. Settings can switch it to speed or temperature.
+- **Colour**: altitude by default, or the model when comparing. Settings can switch it to speed, temperature, model or white, and the location table's dots and symbols use the same colours as the map. The temperature scale runs from red (40C) through yellow and green, is blue at freezing (0C / 32F), and gets darker until it reaches black at −40. Dark arrows get a light outline so they show on any map.
 - **Ground**: in MSL mode, altitudes below the terrain are left out, so the column starts at the pin, which is marked **GND**.
 - **Clouds**: cloud layers are drawn as bands behind the rows. Each band spans the layer's base and top to the nearest 100 ft and is shaded by coverage: SCT 25–50 %, BKN 50–87 %, OVC above that. The location panel lists them exactly, e.g. "BKN 7,400–9,600 · SCT 12,400–12,700", per model when comparing. Layers above or below the shown altitudes get a ▲/▼ marker above the column or below the pin. Layers come from Open-Meteo's per-pressure-level cloud cover, interpolated to every 100 ft.
 
 | One model | Comparing three models |
 |---|---|
 | ![single](docs/screenshot-single.png) | ![compare](docs/screenshot-compare.png) |
+| **Chart dragged off the pin, temperature colours** | **Map rotated 40°** |
+| ![detached](docs/screenshot-detached.png) | ![rotated](docs/screenshot-rotated.png) |
 
 *These were rendered with synthetic wind data in a test. The grey background is tiles that hadn't loaded yet.*
 
@@ -25,7 +27,10 @@ Upper-wind forecasts drawn on a map. The pinned location gets a column of arrows
 - **Compare up to 3 models**: one labelled, colour-coded column per model on the map. The table gives each model's direction and speed per altitude, plus **Δ**, the largest vector difference between the models (bold red at ≥ 10 kt).
 - The columns size themselves to the free map area. Placing a pin moves it to the bottom-centre so the columns fit above it.
 - **Arrow layout**: Stacked (default) or Fan, where all arrows share one origin and length shows speed.
-- **Pinned location**: tap or long-press the map, search for a place, or type `lat, lon`. Tap the pin panel to open the full table (altitude, direction from, speed, temperature).
+- **Pinned location**: long-press the map, then confirm *Get winds here?*. A plain tap does nothing, so panning never moves the pin. You can also search for a place or type `lat, lon`. Tap the pin panel to open the full table (altitude, direction from, speed, temperature).
+- **Move the chart**: drag the ⊕ handle at the bottom of the chart to put the chart anywhere on the map. The forecast spot keeps its pin, and a dashed line joins the chart to it. Drop the chart near the pin to snap it back, or use *Put the chart back on the forecast spot* in the location panel.
+- **Hide panels**: the hide button switches from all panels to the forecast-time slider only. From there you can go back to all panels or hide everything; *Show panels* brings them back.
+- **Map rotation**: rotate the map with two fingers. The chart stays upright, and each symbol turns so it matches its real direction on the rotated map. The compass button in the top-right corner shows which way north is; tap it to turn the map north-up again.
 - **My location** button.
 - **Map styles**: Topo (OpenTopoMap), Streets (OSM), Satellite (Esri World Imagery).
 - **Offline-friendly**: map tiles you've viewed are cached (up to 1 GB), and the last pinned forecast is saved to disk.

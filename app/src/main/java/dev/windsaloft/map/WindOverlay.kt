@@ -4,6 +4,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Point
+import android.view.MotionEvent
 import dev.windsaloft.data.ArrowAnchor
 import dev.windsaloft.data.ArrowColor
 import dev.windsaloft.data.ArrowLayout
@@ -18,6 +19,7 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Overlay
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
@@ -46,6 +48,16 @@ class WindOverlay(private val density: Float) : Overlay() {
     var showTemperature: Boolean = true
     var showClouds: Boolean = true
     var anchor: ArrowAnchor = ArrowAnchor.TAIL
+    /** Where the chart is drawn when dragged away from [location] (null = on the forecast spot). */
+    var chartLocation: LatLon? = null
+    /** Called when the user drops the chart somewhere (null = re-attached to the forecast spot). */
+    var onChartMoved: (LatLon?) -> Unit = {}
+    /** A long-pressed spot awaiting confirmation. */
+    var pendingLocation: LatLon? = null
+    /** Called when the map's rotation changes (degrees clockwise; 0 = north up). */
+    var onRotation: (Float) -> Unit = {}
+    /** The map's current rotation; symbol directions are offset by it so they match the rotated map. */
+    private var rotation = 0f
     var glyph: Glyph = Glyph.ARROW
     var showSpeed: Boolean = true
     /** The altitude of each row (low to high), in the display reference. */
@@ -88,22 +100,126 @@ class WindOverlay(private val density: Float) : Overlay() {
     private val barbStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
+    private val leader = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0xFFFFFFFF.toInt() }
+    private val leaderHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0x99000000.toInt() }
+    private val handleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val handleRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = 0xFFFFFFFF.toInt(); strokeCap = Paint.Cap.ROUND
+    }
     private val path = Path()
     private val pt = Point()
 
     override fun draw(c: Canvas, mapView: MapView, shadow: Boolean) {
         if (shadow) return
+        pendingLocation?.let { p ->
+            mapView.projection.toPixels(GeoPoint(p.lat, p.lon), pt)
+            drawPendingMarker(c, pt.x.toFloat(), pt.y.toFloat())
+        }
         val loc = location ?: return
         mapView.projection.toPixels(GeoPoint(loc.lat, loc.lon), pt)
-        val x = pt.x.toFloat()
-        val y = pt.y.toFloat()
+        val pinX = pt.x.toFloat()
+        val pinY = pt.y.toFloat()
+        // The chart can be dragged away from the forecast spot; a leader line ties them together.
+        val chart = dragTo ?: chartLocation
+        val (x, y) = if (chart == null) pinX to pinY else {
+            mapView.projection.toPixels(GeoPoint(chart.lat, chart.lon), pt)
+            pt.x.toFloat() to pt.y.toFloat()
+        }
+        val detached = chart != null
+        // The map may be rotated (the canvas arrives rotated with it). Track it so symbols can follow it.
+        val orientation = mapView.mapOrientation
+        if (orientation != rotation) { rotation = orientation; onRotation(orientation) }
+        if (detached) {
+            leader.pathEffect = android.graphics.DashPathEffect(floatArrayOf(7 * density, 5 * density), 0f)
+            leaderHalo.strokeWidth = 5f * density
+            leader.strokeWidth = 2.2f * density
+            c.drawLine(x, y, pinX, pinY, leaderHalo)
+            c.drawLine(x, y, pinX, pinY, leader)
+        }
+        drawPin(c, pinX, pinY)
+        // Keep the chart upright on screen: undo the map's rotation around the chart's anchor. The
+        // symbols inside add the rotation back, so each still points along its real compass direction.
+        c.save()
+        c.rotate(-rotation, x, y)
         if (columns.isNotEmpty()) {
             when (layout) {
                 ArrowLayout.STACKED -> drawColumns(c, x, y)
                 ArrowLayout.FAN -> drawFan(c, x, y)
             }
         }
-        drawPin(c, x, y)
+        val handleOffset = drawHandle(c, x, y, detached)
+        c.restore()
+        // Touch events arrive in the same (rotated) canvas frame: place the handle's hit spot there.
+        val o = Math.toRadians(rotation.toDouble())
+        handleX = x + handleOffset * sin(o).toFloat()
+        handleY = y + handleOffset * cos(o).toFloat()
+        pinPx = pinX to pinY
+    }
+
+    // ---------------------------------------------------------------- Dragging the chart
+
+    private var handleX = Float.NaN
+    private var handleY = Float.NaN
+    private var pinPx = Float.NaN to Float.NaN
+    private var dragging = false
+    private var dragTo: LatLon? = null
+
+    /** Drag the chart's handle to move only the chart; drop it near the forecast spot to re-attach. */
+    override fun onTouchEvent(event: MotionEvent, mapView: MapView): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (location == null || handleX.isNaN() || event.pointerCount > 1) return false
+                if (hypot(event.x - handleX, event.y - handleY) > HANDLE_TOUCH_DP * density) return false
+                dragging = true
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> if (dragging) {
+                val g = mapView.projection.fromPixels(event.x.toInt(), event.y.toInt())
+                dragTo = LatLon(g.latitude, g.longitude)
+                mapView.invalidate()
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (dragging) {
+                dragging = false
+                val target = dragTo
+                dragTo = null
+                if (target != null) {
+                    val nearPin = hypot(event.x - pinPx.first, event.y - pinPx.second) < SNAP_DP * density
+                    chartLocation = if (nearPin) null else target
+                    onChartMoved(chartLocation)
+                }
+                mapView.invalidate()
+                return true
+            }
+        }
+        return false
+    }
+
+    /** A round grip just below the chart's base: drag it to move the chart. Returns its distance below the base. */
+    private fun drawHandle(c: Canvas, x: Float, y: Float, detached: Boolean): Float {
+        val r = 9 * density
+        handleFill.color = if (detached) 0xFF1C2733.toInt() else 0xE61C2733.toInt()
+        c.drawCircle(x, y + r + 6 * density, r, handleFill)
+        handleRing.strokeWidth = 1.5f * density
+        c.drawCircle(x, y + r + 6 * density, r, handleRing)
+        // Four-way move arrows.
+        val cy = y + r + 6 * density
+        val a = r * 0.55f
+        handleRing.strokeWidth = 1.6f * density
+        c.drawLine(x - a, cy, x + a, cy, handleRing)
+        c.drawLine(x, cy - a, x, cy + a, handleRing)
+        return r + 6 * density
+    }
+
+    /** A provisional spot from a long-press, shown until the user confirms or cancels. */
+    private fun drawPendingMarker(c: Canvas, x: Float, y: Float) {
+        leader.pathEffect = android.graphics.DashPathEffect(floatArrayOf(5 * density, 4 * density), 0f)
+        leaderHalo.strokeWidth = 5f * density
+        leader.strokeWidth = 2.2f * density
+        c.drawCircle(x, y, 14 * density, leaderHalo)
+        c.drawCircle(x, y, 14 * density, leader)
+        c.drawCircle(x, y, 3 * density, dotFill)
+        c.drawCircle(x, y, 3 * density, dotRing)
     }
 
     // ---------------------------------------------------------------- Stacked columns
@@ -277,14 +393,7 @@ class WindOverlay(private val density: Float) : Overlay() {
         }
     }
 
-    private fun colorFor(w: Wind, col: WindColumn): Int = when (colorMode) {
-        ArrowColor.AUTO -> col.color ?: AltitudeColors.argb(w.altitudeFt, ceilingFt)
-        ArrowColor.ALTITUDE -> AltitudeColors.argb(w.altitudeFt, ceilingFt)
-        ArrowColor.SPEED -> AltitudeColors.speed(w.speedMs * KT_PER_MS)
-        ArrowColor.TEMPERATURE -> w.tempC?.let { AltitudeColors.temperature(it) } ?: 0xFFFFFFFF.toInt()
-        ArrowColor.MODEL -> col.color ?: ModelColors.argb(0)
-        ArrowColor.WHITE -> 0xFFFFFFFF.toInt()
-    }
+    private fun colorFor(w: Wind, col: WindColumn): Int = WindColors.of(colorMode, w, col.color, ceilingFt)
 
     /**
      * Draws one wind glyph. Each runs from its tail to its nose (arrowhead, triangle apex, or a barb's
@@ -303,7 +412,7 @@ class WindOverlay(private val density: Float) : Overlay() {
             return
         }
         val len = if (scaleBySpeed) fullLen * stackedFraction(kt) else fullLen
-        val a = Math.toRadians(w.dirFromDeg + if (glyph == Glyph.TRIANGLE) 0.0 else 180.0)
+        val a = Math.toRadians(w.dirFromDeg + rotation + if (glyph == Glyph.TRIANGLE) 0.0 else 180.0)
         val dx = sin(a).toFloat()
         val dy = -cos(a).toFloat()
         val back = when (anchor) { ArrowAnchor.TAIL -> 0f; ArrowAnchor.NOSE -> len; ArrowAnchor.CENTRE -> len / 2 }
@@ -320,6 +429,7 @@ class WindOverlay(private val density: Float) : Overlay() {
         path.lineTo(sx + dy * hw, sy - dx * hw)
         path.close()
         headHalo.strokeWidth = 2.2f * density
+        headHalo.color = AltitudeColors.haloFor(color)
         c.drawPath(path, headHalo)
         headFill.color = color
         c.drawPath(path, headFill)
@@ -333,7 +443,7 @@ class WindOverlay(private val density: Float) : Overlay() {
             c.drawCircle(cx, cy, calmRadius, line)
             return
         }
-        val a = Math.toRadians(w.dirFromDeg) // toward where the wind comes from
+        val a = Math.toRadians(w.dirFromDeg + rotation) // toward where the wind comes from
         val dx = sin(a).toFloat()
         val dy = -cos(a).toFloat()
         // Tail = the plain (station) end, nose = the feathered end, which faces into the wind.
@@ -360,7 +470,7 @@ class WindOverlay(private val density: Float) : Overlay() {
         while (rest >= 10) { feather(pos, fl); pos += step; rest -= 10 }
         if (rest >= 5) feather(if (pos == 0f) step else pos, fl * 0.55f)
         val sw = maxOf(1.6f * density, stroke * 0.7f)
-        barbStroke.strokeWidth = sw + 2.4f * density; barbStroke.color = 0xAA000000.toInt()
+        barbStroke.strokeWidth = sw + 2.4f * density; barbStroke.color = AltitudeColors.haloFor(color)
         c.drawPath(path, barbStroke)
         barbStroke.strokeWidth = sw; barbStroke.color = color
         c.drawPath(path, barbStroke)
@@ -425,6 +535,7 @@ class WindOverlay(private val density: Float) : Overlay() {
         val by = ey - dy * head
 
         halo.strokeWidth = stroke + 2.4f * density
+        halo.color = AltitudeColors.haloFor(color)
         c.drawLine(x, y, bx, by, halo)
         line.color = color; line.strokeWidth = stroke
         c.drawLine(x, y, bx, by, line)
@@ -436,12 +547,19 @@ class WindOverlay(private val density: Float) : Overlay() {
         path.lineTo(bx + dy * hw, by - dx * hw)
         path.close()
         headHalo.strokeWidth = 1.8f * density
+        headHalo.color = AltitudeColors.haloFor(color)
         c.drawPath(path, headHalo)
         headFill.color = color
         c.drawPath(path, headFill)
     }
 
     companion object {
+        /** How close (dp) a touch must be to the chart handle to start dragging it. */
+        private const val HANDLE_TOUCH_DP = 28f
+
+        /** Dropping the chart within this distance (dp) of the forecast spot re-attaches it. */
+        private const val SNAP_DP = 36f
+
         /** Cloud band opacity by coverage. */
         private val CLOUD_ALPHA = mapOf(CloudCover.SCT to 0.32f, CloudCover.BKN to 0.5f, CloudCover.OVC to 0.66f)
 
