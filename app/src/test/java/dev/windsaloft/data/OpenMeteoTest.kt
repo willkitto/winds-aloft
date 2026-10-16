@@ -23,6 +23,7 @@ class OpenMeteoTest {
         assertTrue(url.contains("geopotential_height_550hPa"))
         assertFalse(url.contains("temperature"))
         assertTrue(url.contains("models=gfs_seamless"))
+        assertTrue(url.contains("wind_gusts_10m"))
     }
 
     // Two locations, as the API returns for comma-separated coordinates. The 1000 hPa level is
@@ -30,7 +31,7 @@ class OpenMeteoTest {
     private val twoLocations = """
         [{"latitude":40.0,"longitude":-105.0,"elevation":1600.0,
           "hourly":{"time":[3600,7200],
-            "wind_speed_10m":[3.0,4.0],"wind_direction_10m":[180,190],
+            "wind_speed_10m":[3.0,4.0],"wind_direction_10m":[180,190],"wind_gusts_10m":[9.5,null],
             "wind_speed_1000hPa":[9.0,9.0],"wind_direction_1000hPa":[90,90],"geopotential_height_1000hPa":[110,112],
             "wind_speed_850hPa":[8.0,null],"wind_direction_850hPa":[250,null],"geopotential_height_850hPa":[1450,1460],
             "wind_speed_700hPa":[15.0,16.0],"wind_direction_700hPa":[270,275],"geopotential_height_700hPa":[3100,3110],
@@ -52,11 +53,22 @@ class OpenMeteoTest {
         assertEquals(1600.0, first.elevationM, 1e-9)
         // hour 0: 10 m + 700 hPa (1000 hPa below ground, 850 hPa at 1450 m is below 1600 m ground too)
         assertEquals(listOf(1610.0, 3100.0), first.profiles[0].map { it.heightM })
-        // Below-ground MSL altitude returns null; AGL surface returns the 10 m wind.
-        val msl = first.windsAt(3600, listOf(0, 9000), AltitudeRef.MSL)
+        // MSL: the below-ground slot under the lowest real altitude shows the ground wind and its gusts;
+        // anything further below ground is empty. AGL 0 ft is the ground wind too.
+        val msl = first.windsAt(3600, listOf(0, 3000, 9000), AltitudeRef.MSL)
         assertNull(msl[0])
-        assertEquals(270.0, msl[1]!!.dirFromDeg, 15.0)
-        assertEquals(3.0, first.windsAt(3600, listOf(0), AltitudeRef.AGL)[0]!!.speedMs, 1e-9)
+        assertTrue(msl[1]!!.surface)
+        assertEquals(3.0, msl[1]!!.speedMs, 1e-9)
+        assertEquals(9.5, msl[1]!!.gustMs!!, 1e-9)
+        assertEquals(5249, msl[1]!!.altitudeFt) // the ground, 1600 m
+        assertEquals(270.0, msl[2]!!.dirFromDeg, 15.0)
+        val agl = first.windsAt(3600, listOf(0, 1000), AltitudeRef.AGL)
+        assertTrue(agl[0]!!.surface)
+        assertEquals(3.0, agl[0]!!.speedMs, 1e-9)
+        assertFalse(agl[1]!!.surface)
+        assertNull(agl[1]!!.gustMs)
+        // No gust given for that hour: the ground wind still shows, just without gusts.
+        assertNull(first.windsAt(7200, listOf(0), AltitudeRef.AGL)[0]!!.gustMs)
 
         // Cloud cover comes from levels above ground only: 850 hPa (1450 m) is under the 1600 m terrain.
         assertEquals(listOf(3100.0 to 60.0), first.clouds[0].map { it.heightM to it.pct })

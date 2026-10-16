@@ -481,7 +481,7 @@ fun PinPanel(
 
 private val ColAlt = 92.dp
 private val ColDir = 84.dp
-private val ColSpd = 64.dp
+private val ColSpd = 72.dp
 
 @Composable
 private fun ProfileHeader(unit: SpeedUnit) {
@@ -498,7 +498,14 @@ private fun ProfileHeader(unit: SpeedUnit) {
 }
 
 @Composable
-private fun altitudeText(ft: Int, s: Settings) = Format.feet(ft) + if (ft == 0 && s.altitudeRef == AltitudeRef.AGL) " sfc" else ""
+private fun altitudeText(ft: Int, s: Settings, w: Wind? = null) = when {
+    w?.surface == true && s.altitudeRef == AltitudeRef.MSL -> "SFC " + Format.feet(w.altitudeFt)
+    w?.surface == true || (ft == 0 && s.altitudeRef == AltitudeRef.AGL) -> "SFC"
+    else -> Format.feet(ft)
+}
+
+/** Speed, plus the gust forecast in brackets for the ground wind: "4 (18)". */
+private fun speedText(w: Wind, s: Settings) = Format.speed(w.speedMs, s.unit) + (w.gustMs?.let { " (${Format.speed(it, s.unit)})" } ?: "")
 
 @Composable
 private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
@@ -508,7 +515,7 @@ private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Canvas(Modifier.size(10.dp)) { drawCircle(rowColor) }
         Spacer(Modifier.width(8.dp))
-        Text(altitudeText(ft, s), Modifier.width(ColAlt), style = num, maxLines = 1)
+        Text(altitudeText(ft, s, w), Modifier.width(ColAlt), style = num, maxLines = 1)
         if (w == null) {
             Text(
                 if (s.altitudeRef == AltitudeRef.MSL) "below ground / no data" else "no data",
@@ -522,7 +529,7 @@ private fun ProfileRow(ft: Int, w: Wind?, s: Settings) {
             Spacer(Modifier.width(6.dp))
             Text(Format.direction(w.dirFromDeg), style = num)
         }
-        Text(Format.speed(w.speedMs, s.unit), Modifier.width(ColSpd), style = num, fontWeight = FontWeight.SemiBold)
+        Text(speedText(w, s), Modifier.width(ColSpd), style = num, fontWeight = FontWeight.SemiBold, maxLines = 1)
         Text(w.tempC?.let { s.tempUnit.format(it) } ?: "", style = num)
     }
 }
@@ -554,7 +561,7 @@ private fun CompareRow(profiles: List<ModelProfile>, index: Int, s: Settings) {
     val ft = profiles.first().winds[index].first
     val winds = profiles.map { it.winds.getOrNull(index)?.second }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(Format.feet(ft), Modifier.width(ColAltCompare), style = num, maxLines = 1)
+        Text(if (winds.any { it?.surface == true }) "SFC" else Format.feet(ft), Modifier.width(ColAltCompare), style = num, maxLines = 1)
         profiles.forEachIndexed { i, p ->
             val w = winds[i]
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -565,7 +572,7 @@ private fun CompareRow(profiles: List<ModelProfile>, index: Int, s: Settings) {
                     Spacer(Modifier.width(2.dp))
                     // Aviation-style "direction/speed", then temperature.
                     Text(
-                        "%03d/%s".format(Math.round(w.dirFromDeg) % 360, Format.speed(w.speedMs, s.unit)),
+                        "%03d/%s".format(Math.round(w.dirFromDeg) % 360, speedText(w, s)),
                         style = num, maxLines = 1,
                     )
                     if (w.tempC != null) {
@@ -776,7 +783,8 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                 )
                 Text(
                     "Each altitude is a row, lowest at the pin; a longer symbol is a stronger wind. Directions are " +
-                        "shown in degrees (°) the wind comes from; temperatures end in C or F. Long-press the map to " +
+                        "shown in degrees (°) the wind comes from; temperatures end in C or F. The bottom SFC row is the " +
+                        "ground wind, with forecast gusts in brackets: 4 (18). Long-press the map to " +
                         "move the forecast spot.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

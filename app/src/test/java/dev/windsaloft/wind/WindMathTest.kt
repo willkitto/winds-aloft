@@ -71,7 +71,9 @@ class WindMathTest {
     fun forecastPointAglVsMsl() {
         val fp = ForecastPoint(LatLon(0.0, 0.0), ground, longArrayOf(3600L), listOf(profile))
         val msl = fp.windsAt(3600L, listOf(0, 8000), AltitudeRef.MSL)
-        assertNull(msl[0]) // sea level is underground here
+        // Sea level is underground here, so that slot shows the ground wind instead.
+        assertTrue(msl[0]!!.surface)
+        assertEquals(4.0, msl[0]!!.speedMs, 1e-9)
         assertNotNull(msl[1])
         val agl = fp.windsAt(3600L, listOf(0, 1000), AltitudeRef.AGL)
         assertEquals(4.0, agl[0]!!.speedMs, 1e-9)

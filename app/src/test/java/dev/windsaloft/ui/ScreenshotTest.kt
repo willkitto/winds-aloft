@@ -69,7 +69,8 @@ class ScreenshotTest {
                 CloudSample(4500.0, 0.0), CloudSample(4700.0, 90.0), CloudSample(5000.0, 95.0), CloudSample(5200.0, 0.0),
             )
         }
-        return ForecastPoint(at, elevation, hours.toLongArray(), profiles, clouds)
+        // Gusty at the ground: 3 m/s sustained, gusting 8-9 m/s.
+        return ForecastPoint(at, elevation, hours.toLongArray(), profiles, clouds, DoubleArray(hours.size) { 8.0 + skew * 0.3 })
     }
 
     @Test

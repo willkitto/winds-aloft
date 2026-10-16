@@ -256,7 +256,10 @@ class WindOverlay(private val density: Float) : Overlay() {
         val lenScale = if (comparing) COMPARE_LENGTH else STACK_LENGTH
         val reach = (if (anchor == ArrowAnchor.CENTRE) cell * lenScale / 2 else cell * lenScale) + stroke * 1.5f + density
         // Sized for the widest possible text, so the slot never changes with the numbers.
-        val topTemplate = listOfNotNull(if (showDirection) "888°" else null, if (showSpeed) "888" else null).joinToString(" ")
+        // The ground row also shows gusts, "12 (25)": reserve room for that whenever there is a ground row.
+        val hasSurface = columns.any { c -> c.winds.any { it?.surface == true } }
+        val speedTemplate = if (hasSurface) "88 (88)" else "888"
+        val topTemplate = listOfNotNull(if (showDirection) "888°" else null, if (showSpeed) speedTemplate else null).joinToString(" ")
         val topW = if (topTemplate.isEmpty()) 0f else width(topTemplate, textSize)
         val tempW = if (showTemperature) width("-88F", tempSize) else 0f
         val labelW = if (topW == 0f && tempW == 0f) 0f else maxOf(topW, tempW) + 6 * density
@@ -318,13 +321,13 @@ class WindOverlay(private val density: Float) : Overlay() {
                 val color = colorFor(w, col)
                 val kt = w.speedMs * KT_PER_MS
                 drawGlyph(c, cx, cy, w, cell * lenScale, cell * 0.16f, stroke, color, anchor)
-                if (i % labelEvery != 0) return@forEachIndexed
+                if (i % labelEvery != 0 && !w.surface) return@forEachIndexed
                 // Label slot: direction + speed on top, temperature underneath, always at the same spot.
                 val lx = cx + reach + 4 * density
                 val hasTemp = showTemperature && w.tempC != null
                 val topLine = listOfNotNull(
                     if (showDirection) "%03d°".format(Math.round(w.dirFromDeg).toInt() % 360) else null,
-                    if (showSpeed) speedLabel(w.speedMs) else null,
+                    if (showSpeed) speedLabel(w.speedMs) + (w.gustMs?.let { " (${speedLabel(it)})" } ?: "") else null,
                 ).joinToString(" ")
                 if (topLine.isNotEmpty()) {
                     text.textSize = textSize; textHalo.textSize = textSize
@@ -360,14 +363,15 @@ class WindOverlay(private val density: Float) : Overlay() {
         // Altitude labels down the left side.
         text.textSize = textSize; textHalo.textSize = textSize
         val altX = colL(0) - 6 * density
+        val surfaceRow = (skip until rows).firstOrNull { i -> columns.any { it.winds.getOrNull(i)?.surface == true } }
         for (i in skip until rows) {
-            if (i % labelEvery != 0) continue
+            if (i % labelEvery != 0 && i != surfaceRow) continue
             val alt = rowAlt(i) ?: continue
-            val label = if (alt == 0) "SFC" else if (alt % 1000 == 0) "${alt / 1000}k" else "$alt"
+            val label = if (alt == 0 || i == surfaceRow) "SFC" else if (alt % 1000 == 0) "${alt / 1000}k" else "$alt"
             drawText(c, label, altX, rowY(i) + textSize * 0.36f, Paint.Align.RIGHT, 0xFFFFFFFF.toInt())
         }
-        // When MSL rows were dropped, the ground is at the pin: mark it.
-        if (skip > 0) {
+        // When MSL rows were dropped, the ground is at the pin: mark it (unless the ground-wind row already does).
+        if (skip > 0 && surfaceRow != skip) {
             ground.pathEffect = android.graphics.DashPathEffect(floatArrayOf(6 * density, 4 * density), 0f)
             ground.strokeWidth = 2f * density
             staffHalo.strokeWidth = 4f * density

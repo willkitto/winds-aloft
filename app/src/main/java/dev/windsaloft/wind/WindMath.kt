@@ -13,8 +13,14 @@ data class LatLon(val lat: Double, val lon: Double)
 /** One model level for one hour: wind (and optionally temperature) at a height above mean sea level. */
 data class RawSample(val heightM: Double, val speedMs: Double, val dirFromDeg: Double, val tempC: Double?)
 
-/** Wind interpolated to a requested altitude. Direction is meteorological: where the wind blows FROM. */
-data class Wind(val altitudeFt: Int, val dirFromDeg: Double, val speedMs: Double, val tempC: Double?)
+/**
+ * Wind interpolated to a requested altitude. Direction is meteorological: where the wind blows FROM.
+ * [surface] marks the ground wind (10 m), which also carries the forecast gust speed, [gustMs].
+ */
+data class Wind(
+    val altitudeFt: Int, val dirFromDeg: Double, val speedMs: Double, val tempC: Double?,
+    val gustMs: Double? = null, val surface: Boolean = false,
+)
 
 enum class AltitudeRef { MSL, AGL }
 
@@ -145,6 +151,8 @@ class ForecastPoint(
     val profiles: List<List<RawSample>>,
     /** Per hour, pressure-level cloud cover sorted by height (empty when the model has none). */
     val clouds: List<List<CloudSample>> = emptyList(),
+    /** Per hour, forecast gust speed at 10 m (NaN = none); null when the model doesn't give gusts. */
+    val surfaceGustsMs: DoubleArray? = null,
 ) {
     /**
      * Cloud layers between [loFt] and [hiFt] (display reference), found by scanning every 100 ft for
@@ -177,14 +185,33 @@ class ForecastPoint(
 
     fun hourIndex(epochSec: Long): Int = java.util.Arrays.binarySearch(timesEpochSec, epochSec).let { if (it >= 0) it else -1 }
 
+    /**
+     * Winds at each altitude. The ground wind (with gusts) fills the 0 ft AGL slot, or in MSL the
+     * slot just below the lowest altitude above ground, so the column starts with the surface wind.
+     */
     fun windsAt(epochSec: Long, altitudesFt: List<Int>, ref: AltitudeRef): List<Wind?> {
         val i = hourIndex(epochSec)
         if (i < 0) return altitudesFt.map { null }
         val samples = profiles[i]
         val base = if (ref == AltitudeRef.AGL) elevationM else 0.0
-        return altitudesFt.map { ft ->
+        val winds = altitudesFt.map { ft ->
+            if (ref == AltitudeRef.AGL && ft == 0) return@map surfaceAt(i, 0)
             WindMath.interpolate(samples, base + ft * M_PER_FT, elevationM)
                 ?.let { Wind(ft, it.dirFromDeg, it.speedMs, it.tempC) }
+        }.toMutableList()
+        if (ref == AltitudeRef.MSL) {
+            val first = winds.indexOfFirst { it != null }
+            if (first > 0 && altitudesFt[first - 1] * M_PER_FT < elevationM) {
+                winds[first - 1] = surfaceAt(i, Math.round(elevationM / M_PER_FT).toInt())
+            }
         }
+        return winds
+    }
+
+    /** The 10 m wind for hour [i], labelled with [altitudeFt], with the gust forecast when there is one. */
+    private fun surfaceAt(i: Int, altitudeFt: Int): Wind? {
+        val s = profiles[i].firstOrNull { kotlin.math.abs(it.heightM - (elevationM + 10)) < 1.0 } ?: return null
+        val gust = surfaceGustsMs?.getOrNull(i)?.takeUnless { it.isNaN() }
+        return Wind(altitudeFt, s.dirFromDeg, s.speedMs, s.tempC, gustMs = gust, surface = true)
     }
 }

@@ -68,6 +68,7 @@ object OpenMeteo {
             add("wind_direction_${h}m")
             if (includeTemperature) add("temperature_${t}m")
         }
+        add("wind_gusts_10m")
         for (p in levelsFor(ceilingFt)) {
             add("wind_speed_${p}hPa")
             add("wind_direction_${p}hPa")
@@ -152,7 +153,7 @@ object OpenMeteo {
                 if (h > elevation) CloudSample(h, pct) else null
             }.sortedBy { it.heightM }
         }
-        return ForecastPoint(location, elevation, times, profiles, clouds)
+        return ForecastPoint(location, elevation, times, profiles, clouds, series("wind_gusts_10m"))
     }
 
     private fun JsonObject.num(key: String): Double? = (this[key] as? JsonElement)?.jsonPrimitive?.doubleOrNull
