@@ -27,6 +27,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -99,7 +100,7 @@ private const val WINDOW = 24
  * the time bar past the edge, or use the 24 h buttons to see the other day.
  */
 @Composable
-fun TwoDayScreen(state: UiState, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+fun TwoDayScreen(state: UiState, onDismiss: () -> Unit, onAltRange: (IntRange) -> Unit = {}, modifier: Modifier = Modifier) {
     BackHandler(onBack = onDismiss)
     val s = state.settings
     val models = s.modelIds
@@ -137,6 +138,7 @@ fun TwoDayScreen(state: UiState, onDismiss: () -> Unit, modifier: Modifier = Mod
                 TextButton(onClick = { scope.launch { scroll.animateTo(0f) } }, enabled = scroll.value > 0.01f) { Text("‹ First 24 h") }
                 TextButton(onClick = { scope.launch { scroll.animateTo(1f) } }, enabled = scroll.value < 0.99f) { Text("Next 24 h ›") }
             }
+            AltitudeRange(state, onAltRange)
             val axis = remember { AxisModel({ scroll.value }) { f -> scope.launch { scroll.snapTo(f.coerceIn(0f, 1f)) } } }
             if (!cloudsAll) {
                 // Only the models picked in Settings; one tap switches.
@@ -168,6 +170,28 @@ fun TwoDayScreen(state: UiState, onDismiss: () -> Unit, modifier: Modifier = Mod
                 AllModelClouds(state, models.filter { state.pinForecasts[it] != null }, cursor, zone, axis, shade, Modifier.weight(1f).fillMaxWidth(), onCursor = { cursor = it })
             }
         }
+    }
+}
+
+/** The same altitude range as the main map (changing it here changes it there too). */
+@Composable
+private fun AltitudeRange(state: UiState, onAltRange: (IntRange) -> Unit) {
+    val s = state.settings
+    val ceilK = s.ceilingFt / 1000
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Altitude", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            Text(
+                "${Format.feet(state.altRangeK.first * 1000)} – ${Format.feet(state.altRangeK.last * 1000)} ft ${s.altitudeRef.name}",
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+        RangeSlider(
+            value = state.altRangeK.first.toFloat()..state.altRangeK.last.toFloat(),
+            onValueChange = { r -> onAltRange(r.start.roundToInt()..r.endInclusive.roundToInt()) },
+            valueRange = 0f..ceilK.toFloat(),
+            modifier = Modifier.height(32.dp).semantics { contentDescription = "Altitude range" },
+        )
     }
 }
 
@@ -238,8 +262,8 @@ private fun WindStrips(
     modifier: Modifier, onCursor: (Int) -> Unit,
 ) {
     val s = state.settings
-    // All altitudes up to the ceiling, ground at the bottom; the map's altitude range is ignored here.
-    val altitudes = remember(s.ceilingFt) { (0..s.ceilingFt / 1000).map { it * 1000 } }
+    // The altitude range from the slider (shared with the map), ground at the bottom.
+    val altitudes = remember(state.altRangeK) { state.altitudesFt }
     val winds = remember(fp, state.nowHourEpoch, s.altitudeRef, altitudes) {
         (0..HOURS).map { h -> fp.windsAt(state.nowHourEpoch + h * 3600L, altitudes, s.altitudeRef) }
     }
@@ -370,7 +394,9 @@ private fun AllModelClouds(
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val line = MaterialTheme.colorScheme.outlineVariant
     val cloudInk = if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) Color(0xFFC9D3DE) else Color(0xFF55657A)
-    val ceiling = s.ceilingFt
+    // The picture spans the altitude range from the slider.
+    val lo = state.altRangeK.first * 1000
+    val hi = maxOf(state.altRangeK.last * 1000, lo + 1000)
     val step = 500
     val day = remember(state.pin, state.nowHourEpoch) { dayHours(state) }
     val density = LocalDensity.current.density
@@ -378,24 +404,24 @@ private fun AllModelClouds(
     val rightPad = 10 * density
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
         Text(
-            "Each picture is one model: time across, altitude up (0 to ${Format.feet(ceiling)} ft ${s.altitudeRef.name}), stronger shade for more cloud. Drag to move the time bar.",
+            "Each picture is one model: time across, altitude up (${Format.feet(lo)} to ${Format.feet(hi)} ft ${s.altitudeRef.name}), stronger shade for more cloud. Drag to move the time bar.",
             style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
         if (models.isEmpty()) Text(if (state.pinLoading) "Loading forecasts…" else "No forecasts available.", Modifier.padding(16.dp))
         models.forEach { id ->
             val fp = state.pinForecasts[id] ?: return@forEach
-            val grid = remember(fp, state.nowHourEpoch, s.altitudeRef, ceiling) {
+            val grid = remember(fp, state.nowHourEpoch, s.altitudeRef, lo, hi) {
                 val base = if (s.altitudeRef == AltitudeRef.AGL) fp.elevationM else 0.0
                 (0..HOURS).map { h ->
                     val levels = fp.clouds.getOrNull(fp.hourIndex(state.nowHourEpoch + h * 3600L)).orEmpty()
-                    (0..ceiling / step).map { k ->
-                        val m = base + k * step * M_PER_FT
+                    (0..(hi - lo) / step).map { k ->
+                        val m = base + (lo + k * step) * M_PER_FT
                         if (levels.isEmpty() || m < fp.elevationM) -1.0 else WindMath.cloudAt(levels, m) ?: 0.0
                     }
                 }
             }
             val noData = grid.all { col -> col.all { it < 0 } }
-            val layers = fp.cloudLayers(state.nowHourEpoch + cursor * 3600L, s.altitudeRef, 0, ceiling)
+            val layers = fp.cloudLayers(state.nowHourEpoch + cursor * 3600L, s.altitudeRef, lo, hi)
             Row(Modifier.padding(start = 16.dp, end = 12.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(OpenMeteo.short(id), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, modifier = Modifier.width(56.dp))
                 Text(
@@ -406,14 +432,17 @@ private fun AllModelClouds(
             Canvas(Modifier.fillMaxWidth().height(92.dp).timeGestures(axis, { y, h -> y > h - 16 * density }, onCursor, left, rightPad)) {
                 val ax = TimeAxis(left, size.width - rightPad, axis.scroll)
                 val top = 4.dp.toPx(); val bottom = size.height - 16.dp.toPx()
-                fun y(ft: Float) = bottom - (bottom - top) * ft / ceiling
+                fun y(ft: Float) = bottom - (bottom - top) * (ft - lo) / (hi - lo)
+                val bin = (bottom - top) * step / (hi - lo)
                 clipRect(ax.left, 0f, ax.right, size.height) {
                     dayNight(ax, day, shade, top, bottom, null)
-                    for (h in 0 until HOURS) grid[h].forEachIndexed { k, pct ->
-                        if (pct >= WindMath.CLOUD_LAYER_MIN_PCT) drawRect(
-                            cloudInk.copy(alpha = (0.2 + 0.65 * pct / 100).toFloat().coerceAtMost(0.88f)),
-                            Offset(ax.x(h.toFloat()), y((k + 0.5f) * step)), Size(ax.x(h + 1f) - ax.x(h.toFloat()) + 0.5f, y(0f) - y(step.toFloat()) + 0.5f),
-                        )
+                    clipRect(ax.left, top, ax.right, bottom) {
+                        for (h in 0 until HOURS) grid[h].forEachIndexed { k, pct ->
+                            if (pct >= WindMath.CLOUD_LAYER_MIN_PCT) drawRect(
+                                cloudInk.copy(alpha = (0.2 + 0.65 * pct / 100).toFloat().coerceAtMost(0.88f)),
+                                Offset(ax.x(h.toFloat()), y(lo + (k + 0.5f) * step)), Size(ax.x(h + 1f) - ax.x(h.toFloat()) + 0.5f, bin + 0.5f),
+                            )
+                        }
                     }
                     for (h in 0..HOURS) {
                         val zt = Instant.ofEpochSecond(state.nowHourEpoch + h * 3600L).atZone(zone)
@@ -423,7 +452,7 @@ private fun AllModelClouds(
                     drawLine(ink.copy(alpha = 0.8f), Offset(cx, top), Offset(cx, bottom), 1.5.dp.toPx())
                 }
                 drawRect(line, Offset(ax.left, top), Size(ax.right - ax.left, bottom - top), style = Stroke(1f))
-                listOf(0, ceiling / 3 / 1000 * 1000, ceiling * 2 / 3 / 1000 * 1000, ceiling).forEach { ft ->
+                listOf(lo, (lo + (hi - lo) / 3) / 1000 * 1000, (lo + (hi - lo) * 2 / 3) / 1000 * 1000, hi).distinct().forEach { ft ->
                     drawLine(line, Offset(ax.left, y(ft.toFloat())), Offset(ax.right, y(ft.toFloat())), 0.6f)
                     txt(measurer, if (ft == 0) "0" else "${ft / 1000}k", Offset(ax.left - 5.dp.toPx(), y(ft.toFloat()) - 6.dp.toPx()), muted, 9.5f, right = true)
                 }
@@ -471,7 +500,7 @@ private fun DrawScope.hourAxis(ax: TimeAxis, state: UiState, zone: ZoneId, top: 
     }
     // Name the first day too, unless a midnight label is right there.
     val first = Instant.ofEpochSecond(state.nowHourEpoch).atZone(zone)
-    if (first.hour in 1..20) txt(m, DAY.format(first), Offset(ax.x(0f) + 3.dp.toPx(), 1.dp.toPx()), ink, 11f, bold = true)
+    if (first.hour in 1..17) txt(m, DAY.format(first), Offset(ax.x(0f) + 3.dp.toPx(), 1.dp.toPx()), ink, 11f, bold = true)
 }
 
 /** A thin bar showing which part of the 48 hours is on screen. */

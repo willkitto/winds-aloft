@@ -150,7 +150,7 @@ class ScreenshotTest {
         val state = UiState(
             settings = settings, pin = pin, pinLabel = "Boulder, Colorado",
             pinForecasts = sixModels.take(4).mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6) }.toMap(),
-            nowHourEpoch = now, hourOffset = 10, unavailableModels = setOf("ncep_hrrr_conus"),
+            nowHourEpoch = now, hourOffset = 10, unavailableModels = setOf("ncep_hrrr_conus"), altRangeK = 5..14,
         )
         compose.setContent { WindsAloftTheme { TwoDayScreen(state, {}) } }
         compose.waitForIdle()

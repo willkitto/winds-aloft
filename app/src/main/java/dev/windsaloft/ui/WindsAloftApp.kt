@@ -445,7 +445,7 @@ fun WindsAloftApp(vm: MainViewModel) {
         )
     }
     if (showTwoDay && state.pin != null) {
-        TwoDayScreen(state = state, onDismiss = { showTwoDay = false })
+        TwoDayScreen(state = state, onDismiss = { showTwoDay = false }, onAltRange = vm::setAltRange)
     }
     if (showPlaces) {
         PlacesDialog(
