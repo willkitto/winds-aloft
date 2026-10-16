@@ -185,20 +185,21 @@ const SNAP = window.WA_SNAPSHOT || null;
 // ======================================================================== design knobs
 const DEFAULT_DESIGN = {
   layout: "stacked", glyph: "arrow", pointing: "downwind", anchor: "tail", clouds: "labels",
-  rowHeight: 38, lenScale: 1.25, minFrac: 0.5, fullKt: 40,
-  strokeScale: 1, headScale: 1, halo: 1, staff: true, colGap: 8,
+  rowHeight: 38, lenScale: 1.25, compareLenScale: 0.85, minFrac: 0.5, fullKt: 40,
+  strokeScale: 1, headScale: 1, halo: 1, staff: true, colGap: 4,
   colorMode: "auto", speedLabels: true, tempLabels: true, altLabels: true, labelScale: 1, gnd: true,
   fanPxPerKt: 2.2, mapFade: 0, mapDarken: 0,
 };
 const KNOBS = [
   { group: "Layout", key: "layout", label: "Layout", type: "select", options: [["stacked","Stacked columns"],["fan","Fan from pin"]] },
   { group: "Layout", key: "glyph", label: "Glyph", type: "select", options: [["arrow","Arrow"],["triangle","Triangle"],["barb","Wind barb"]] },
-  { group: "Layout", key: "anchor", label: "Arrow anchor", type: "select", options: [["tail","Windsock (tail on line)"],["center","Centred on line"]] },
-  { group: "Layout", key: "pointing", label: "Arrows point", type: "select", options: [["downwind","Downwind (to)"],["upwind","Upwind (from)"]] },
+  { group: "Layout", key: "anchor", label: "On the line", type: "select", options: [["tail","Tail"],["nose","Nose (point)"],["center","Centre"]] },
+  { group: "Layout", key: "pointing", label: "Points (arrow, triangle)", type: "select", options: [["downwind","Downwind (to)"],["upwind","Upwind (from)"]] },
   { group: "Layout", key: "rowHeight", label: "Row spacing", type: "range", min: 20, max: 80, step: 1, fmt: v => v + " dp" },
   { group: "Layout", key: "colGap", label: "Column gap", type: "range", min: 0, max: 40, step: 1, fmt: v => v + " dp" },
   { group: "Layout", key: "staff", label: "Staff line", type: "toggle" },
   { group: "Arrows", key: "lenScale", label: "Arrow length", type: "range", min: 0.5, max: 1.8, step: 0.05, fmt: v => Math.round(v * 100) + "% of row" },
+  { group: "Arrows", key: "compareLenScale", label: "Arrow length (comparing)", type: "range", min: 0.5, max: 1.8, step: 0.05, fmt: v => Math.round(v * 100) + "% of row" },
   { group: "Arrows", key: "minFrac", label: "Calm size", type: "range", min: 0.1, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + "% of full" },
   { group: "Arrows", key: "fullKt", label: "Full size at", type: "range", min: 10, max: 80, step: 1, fmt: v => v + " kt" },
   { group: "Arrows", key: "strokeScale", label: "Line weight", type: "range", min: 0.4, max: 2.5, step: 0.05, fmt: v => "×" + v.toFixed(2) },
@@ -216,11 +217,21 @@ const KNOBS = [
   { group: "Map", key: "mapFade", label: "Fade map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
   { group: "Map", key: "mapDarken", label: "Darken map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
 ];
+/**
+ * Natural defaults when a glyph is picked: every glyph is attached at its upwind end and trails downwind.
+ * Arrow = windsock (points downwind, tail on the line). Triangle = landing tetrahedron (points into the
+ * wind, nose on the line). Barb = feathers (the end facing into the wind) on the line.
+ */
+const GLYPH_DEFAULTS = {
+  arrow: { pointing: "downwind", anchor: "tail" },
+  triangle: { pointing: "upwind", anchor: "nose" },
+  barb: { anchor: "nose" },
+};
 const EXAMPLES = [
-  { name: "Windsock + clouds (proposed)", design: {} },
-  { name: "Centred arrows (v0.4)", design: { anchor: "center", clouds: "bands" } },
-  { name: "Coloured by temperature", design: { colorMode: "temperature", strokeScale: 1.3 } },
-  { name: "Wind barbs", design: { glyph: "barb", minFrac: 1, lenScale: 1.1 } },
+  { name: "Windsock arrows", design: {} },
+  { name: "Tetrahedron triangles", design: { glyph: "triangle", ...GLYPH_DEFAULTS.triangle } },
+  { name: "Wind barbs (feathers on line)", design: { glyph: "barb", ...GLYPH_DEFAULTS.barb, minFrac: 1, lenScale: 1.1 } },
+  { name: "Wind barbs (chart style)", design: { glyph: "barb", anchor: "tail", minFrac: 1, lenScale: 1.1 } },
 ];
 
 // ======================================================================== wind maths (port of WindMath.kt)
@@ -432,7 +443,7 @@ function columnsFor(design) {
   return S.models.filter(m => S.forecasts[m]).map((m, slot) => ({
     label: comparing ? shortName(m) : null, model: m, slot: S.models.indexOf(m),
     winds: windsAt(S.forecasts[m], epoch, alts, S.ref),
-    clouds: cloudLayers(S.forecasts[m], epoch, S.ref, S.altLo * 1000, S.altHi * 1000),
+    clouds: cloudLayers(S.forecasts[m], epoch, S.ref, 0, S.ceiling),
   }));
 }
 function colourFor(design, w, col) {
@@ -493,107 +504,104 @@ function drawColumns(ctx, x, y, cols, d) {
   if (skip >= rows) return;
   const rowY = i => y - cell * (i - skip + 0.5);
   const alts = []; for (let k = S.altLo; k <= S.altHi; k++) alts.push(k * 1000);
-  const altY = ft => y - cell * ((ft - alts[skip]) / 1000 + 0.5);          // any altitude -> screen y
+  const loShown = alts[skip], hiShown = alts[alts.length - 1];
+  const altY = ft => y - cell * ((ft - loShown) / 1000 + 0.5);              // any altitude -> screen y
   const top = y - cell * (rows - skip);
-  const textSize = clamp(cell * 0.36, 10, 15) * d.labelScale, tempSize = textSize * 0.88;
+  const textSize = clamp(cell * 0.36, 10, 15) * d.labelScale, tempSize = textSize * 0.86;
   const stroke = clamp(cell * 0.085, 2.4, 4.2) * d.strokeScale;
   const every = Math.max(1, Math.ceil(textSize * 1.15 / cell));
-  const windsock = d.anchor === "tail" && d.glyph !== "barb";
+  const comparing = cols.length > 1;
+  const anchoredAtEnd = d.anchor !== "center";
+  const lenScale = comparing ? d.compareLenScale : d.lenScale;
   const measure = (s, size) => { setText(ctx, size, "left"); return ctx.measureText(s).width; };
 
-  // Pass 1: per row, the arrow's horizontal reach and which side its labels go (away from the arrow).
-  const geo = cols.map(col => {
-    const rowsG = col.winds.map((w, i) => {
-      if (!w) return null;
-      const kt = w.sp * KT_PER_MS, len = cell * d.lenScale * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt));
-      const a = (w.d + (d.pointing === "downwind" ? 180 : 0)) * Math.PI / 180, dx = Math.sin(a) * len;
-      const pad = stroke * 2 + 2;
-      const [x0, x1] = windsock ? [Math.min(0, dx) - pad, Math.max(0, dx) + pad] : [-Math.abs(dx) / 2 - pad, Math.abs(dx) / 2 + pad];
-      const labelled = i % every === 0;
-      const sw = d.speedLabels && labelled ? measure(fmtSpeed(w.sp), textSize) : 0;
-      const tw = d.tempLabels && labelled && w.t != null ? measure(fmtTemp(w.t), tempSize) + 4 : 0;
-      return { w, i, x0, x1, sw, tw, dx };
-    });
-    const live = rowsG.filter(Boolean);
-    // All of a column's labels go on one side: the side its arrows reach into least.
-    const reachR = live.reduce((t, r) => t + Math.max(0, r.dx), 0), reachL = live.reduce((t, r) => t + Math.max(0, -r.dx), 0);
-    const side = windsock && reachR > reachL ? "left" : "right";
-    live.forEach(r => r.side = side);
-    const rightLabelX = Math.max(4, ...live.filter(r => r.side === "right").map(r => r.x1)) + 4;
-    const leftLabelX = Math.min(-4, ...live.filter(r => r.side === "left").map(r => r.x0)) - 4;
-    const left = Math.max(cell / 2, ...live.map(r => -r.x0), ...live.filter(r => r.side === "left").map(r => -leftLabelX + r.sw + r.tw));
-    const right = Math.max(cell / 2, ...live.map(r => r.x1), ...live.filter(r => r.side === "right").map(r => rightLabelX + r.sw + r.tw));
-    return { col, rows: rowsG, left, right, leftLabelX, rightLabelX };
-  });
+  // Fixed geometry, independent of the forecast, so nothing moves as the time changes:
+  // each column reserves the farthest an arrow could reach in any direction, then a label slot.
+  const maxLen = cell * lenScale;
+  const R = (anchoredAtEnd ? maxLen : maxLen / 2) + stroke * 1.5 + 1;
+  const sw = d.speedLabels ? measure("888", textSize) : 0, tw = d.tempLabels ? measure("-88°", tempSize) : 0;
+  const labelW = sw || tw ? Math.max(sw, tw) + 6 : 0;
+  const colW = 2 * R + labelW + d.colGap;
+  const altW = d.altLabels ? measure("14k", textSize) + 12 : 0;
+  const blockW = altW + cols.length * colW - d.colGap;
+  const cx0 = comparing ? x - blockW / 2 + altW + R : x;                  // one column sits on the pin
+  const cxs = cols.map((_, j) => cx0 + j * colW);
+  const colL = j => cxs[j] - R, colR = j => cxs[j] + R + labelW;
+  const blockRight = colR(cols.length - 1);
 
-  // Pass 2: place the columns side by side, packed by their actual width.
-  setText(ctx, textSize, "right");
-  const altW = d.altLabels ? ctx.measureText("14k").width + 12 : 0;
-  const cxs = []; let acc = 0;
-  geo.forEach((g, j) => { if (j) acc += geo[j - 1].right + d.colGap + g.left; cxs.push(acc); });
-  // One column sits on the pin; several are centred as a block (altitude labels included).
-  const blockL = -geo[0].left - altW, blockR = cxs[cxs.length - 1] + geo[geo.length - 1].right;
-  const shift = cols.length === 1 ? x : x - (blockL + blockR) / 2;
-  cxs.forEach((v, j) => cxs[j] = v + shift);
-  const singleRight = cxs[cxs.length - 1] + geo[geo.length - 1].right;
-
-  // Clouds behind everything: one band per layer per column, spanning its exact base and top.
-  if (d.clouds !== "off") geo.forEach((g, j) => {
-    for (const L of g.col.clouds || []) {
+  // Clouds: bands for layers within the shown altitudes; markers for layers above or below them.
+  const markers = [];
+  if (d.clouds !== "off") cols.forEach((col, j) => {
+    for (const L of col.clouds || []) {
+      if (L.base > hiShown) { markers.push({ j, where: "above", L }); continue; }
+      if (L.top < loShown) { markers.push({ j, where: "below", L }); continue; }
       const yb = Math.min(y, altY(L.base)), yt = Math.max(top, altY(L.top + 100));
       if (yb <= yt) continue;
-      const x0 = cxs[j] - g.left, x1 = cxs[j] + g.right;
       ctx.fillStyle = `rgba(236,242,248,${CLOUD_ALPHA[L.cat]})`;
-      ctx.beginPath(); ctx.roundRect(x0, yt, x1 - x0, yb - yt, 6); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(colL(j), yt, colR(j) - colL(j), yb - yt, 6); ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = 1.2; ctx.stroke();
-      if (d.clouds === "labels" && cols.length === 1) {
-        setText(ctx, textSize * 0.9, "left");
-        haloText(ctx, L.cat, singleRight + 8, (yb + yt) / 2 - 2, "#ffffff");
-        setText(ctx, textSize * 0.8, "left");
-        haloText(ctx, `${fmtFt(L.base)}–${fmtFt(L.top)}`, singleRight + 8, (yb + yt) / 2 + textSize * 0.85, "#e6eef5");
+      if (d.clouds === "labels" && !comparing) {
+        setText(ctx, textSize * 0.9, "left"); haloText(ctx, L.cat, blockRight + 8, (yb + yt) / 2 - 2, "#ffffff");
+        setText(ctx, textSize * 0.8, "left"); haloText(ctx, `${fmtFt(L.base)}–${fmtFt(L.top)}`, blockRight + 8, (yb + yt) / 2 + textSize * 0.85, "#e6eef5");
       }
     }
   });
 
   ctx.lineCap = "round";
-  if (cols.length > 1 && d.staff) line(ctx, Math.min(cxs[0], x), y, Math.max(cxs[cxs.length - 1], x), y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
-  geo.forEach((g, j) => {
-    const cx = cxs[j], col = g.col;
-    const staffColor = d.colorMode === "auto" && cols.length > 1 ? MODEL_COLORS[col.slot % 3] : "rgba(255,255,255,0.93)";
+  if (comparing && d.staff) line(ctx, Math.min(cxs[0], x), y, Math.max(cxs[cxs.length - 1], x), y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
+  cols.forEach((col, j) => {
+    const cx = cxs[j];
+    const staffColor = d.colorMode === "auto" && comparing ? MODEL_COLORS[col.slot % 3] : "rgba(255,255,255,0.93)";
     if (d.staff) line(ctx, cx, y, cx, top, staffColor, 1.6, "rgba(0,0,0,0.55)", 4);
-    for (const r of g.rows) {
-      if (!r) continue;
-      const cy = rowY(r.i), w = r.w;
-      drawGlyph(ctx, cx, cy, w, cell, stroke, colourFor(d, w, col), d, true);
-      const ty = cy + textSize * 0.36, tempTint = d.colorMode === "temperature" ? "#ffffff" : tempLabelColor(w.t);
-      if (r.side === "right") {
-        let tx = cx + g.rightLabelX;
-        if (r.sw) { setText(ctx, textSize, "left"); haloText(ctx, fmtSpeed(w.sp), tx, ty, "#ffffff"); tx += r.sw + 4; }
-        if (r.tw) { setText(ctx, tempSize, "left"); haloText(ctx, fmtTemp(w.t), tx, ty, tempTint); }
-      } else {
-        let tx = cx + g.leftLabelX;
-        if (r.tw) { setText(ctx, tempSize, "right"); haloText(ctx, fmtTemp(w.t), tx, ty, tempTint); tx -= r.tw; }
-        if (r.sw) { setText(ctx, textSize, "right"); haloText(ctx, fmtSpeed(w.sp), tx, ty, "#ffffff"); }
+    col.winds.forEach((w, i) => {
+      if (!w) return;
+      const cy = rowY(i);
+      drawGlyph(ctx, cx, cy, w, cell, stroke, colourFor(d, w, col), d, true, lenScale);
+      if (i % every) return;
+      // Label slot: speed on top, temperature underneath, always at the same spot.
+      const lx = cx + R + 4, hasT = d.tempLabels && w.t != null;
+      if (d.speedLabels) { setText(ctx, textSize, "left"); haloText(ctx, fmtSpeed(w.sp), lx, hasT ? cy - 1 : cy + textSize * 0.36, "#ffffff"); }
+      if (hasT) {
+        setText(ctx, tempSize, "left");
+        haloText(ctx, fmtTemp(w.t), lx, d.speedLabels ? cy + tempSize + 1 : cy + tempSize * 0.36, d.colorMode === "temperature" ? "#ffffff" : tempLabelColor(w.t));
       }
-    }
-    if (col.label) { setText(ctx, textSize, "center"); haloText(ctx, col.label, cx, top - 6, MODEL_COLORS[col.slot % 3]); }
+    });
+    if (col.label) { setText(ctx, textSize, "center"); haloText(ctx, col.label, cx + labelW / 2, top - 6, MODEL_COLORS[col.slot % 3]); }
   });
 
-  const altX = cxs[0] - geo[0].left - 8;
+  // Out-of-range cloud markers: stacked upward above the column, downward below the pin.
+  const stack = {};
+  for (const m of markers) {
+    const key = m.j + m.where, n = stack[key] = (stack[key] || 0) + 1;
+    const h = textSize + 8, cx = (colL(m.j) + colR(m.j)) / 2;
+    const yc = m.where === "above" ? top - (comparing ? textSize + 12 : 8) - h / 2 - (n - 1) * (h + 3) : y + 12 + h / 2 + (n - 1) * (h + 3);
+    cloudMarker(ctx, cx, yc, `${m.where === "above" ? "▲" : "▼"} ${m.L.cat} ${fmtFt(m.L.base)}–${fmtFt(m.L.top)}`, m.L.cat, textSize * 0.82, h);
+  }
+
+  const altX = colL(0) - 6;
   if (d.altLabels) {
     setText(ctx, textSize, "right");
     for (let i = skip; i < rows; i++) {
       if (i % every) continue;
-      const w = cols.map(c => c.winds[i]).find(Boolean); if (!w) continue;
-      haloText(ctx, w.alt === 0 ? "SFC" : w.alt / 1000 + "k", altX, rowY(i) + textSize * 0.36, "#ffffff");
+      haloText(ctx, alts[i] === 0 ? "SFC" : alts[i] / 1000 + "k", altX, rowY(i) + textSize * 0.36, "#ffffff");
     }
   }
   if (d.gnd && skip > 0) {
     ctx.setLineDash([6, 4]);
-    line(ctx, cxs[0] - geo[0].left, y, cxs[cxs.length - 1] + geo[geo.length - 1].right, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
+    line(ctx, colL(0), y, blockRight, y, "#ffffff", 2, "rgba(0,0,0,0.55)", 4);
     ctx.setLineDash([]);
     setText(ctx, textSize, "right"); haloText(ctx, "GND", altX, y + textSize * 0.36, "#ffffff");
   }
+}
+/** A small pill naming a cloud layer that lies outside the shown altitudes. */
+function cloudMarker(ctx, cx, yc, text, cat, size, h) {
+  ctx.font = `700 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const w = ctx.measureText(text).width + 14;
+  ctx.fillStyle = `rgba(236,242,248,${0.55 + CLOUD_ALPHA[cat] * 0.6})`;
+  ctx.beginPath(); ctx.roundRect(cx - w / 2, yc - h / 2, w, h, h / 2); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.fillStyle = "#1c2733"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(text, cx, yc + 0.5); ctx.textBaseline = "alphabetic";
 }
 function drawFan(ctx, x, y, cols, d) {
   const stroke = 3 * d.strokeScale;
@@ -606,15 +614,13 @@ function line(ctx, x0, y0, x1, y1, color, width, halo, haloW) {
   ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
 }
 /** stacked: glyph centred on (cx, cy) and sized to `size` (the row). fan: glyph starts at (cx, cy), `size` long. */
-function drawGlyph(ctx, cx, cy, w, size, stroke, color, d, stacked) {
+function drawGlyph(ctx, cx, cy, w, size, stroke, color, d, stacked, lenScale = d.lenScale) {
   const kt = w.sp * KT_PER_MS, haloA = Math.min(1, 0.67 * d.halo), haloC = `rgba(0,0,0,${haloA})`;
-  if (d.glyph === "barb") return drawBarb(ctx, cx, cy, w, stacked ? size * d.lenScale : 44, stroke, color, haloC, d, stacked);
+  if (d.glyph === "barb") return drawBarb(ctx, cx, cy, w, stacked ? size * lenScale : 44, stroke, color, haloC, d, stacked);
   if (kt < 1) { ctx.strokeStyle = color; ctx.lineWidth = stroke * 0.8; ctx.beginPath(); ctx.arc(cx, cy, stacked ? size * 0.16 : 8, 0, 7); ctx.stroke(); return; }
-  const len = stacked ? size * d.lenScale * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt)) : size;
+  const len = stacked ? size * lenScale * (d.minFrac + (1 - d.minFrac) * Math.min(1, kt / d.fullKt)) : size;
   const a = (w.d + (d.pointing === "downwind" ? 180 : 0)) * Math.PI / 180, dx = Math.sin(a), dy = -Math.cos(a);
-  // Windsock: the tail (the end facing into the wind) sits on the column's centre line.
-  const centred = stacked && d.anchor !== "tail";
-  const sx = centred ? cx - dx * len / 2 : cx, sy = centred ? cy - dy * len / 2 : cy;
+  const [sx, sy] = anchorStart(cx, cy, dx, dy, len, d.anchor, stacked);
   const ex = sx + dx * len, ey = sy + dy * len;
   if (d.glyph === "triangle") {
     const hw = len * 0.22 * d.headScale;
@@ -630,12 +636,22 @@ function drawGlyph(ctx, cx, cy, w, size, stroke, color, d, stacked) {
   if (haloA > 0) { ctx.lineJoin = "round"; ctx.lineWidth = 1.8 * d.halo; ctx.strokeStyle = haloC; ctx.stroke(); }
   ctx.fillStyle = color; ctx.fill();
 }
+/**
+ * Where a glyph starts so the chosen end sits on the column's centre line. The glyph runs from its tail
+ * (start) to its nose (the point: an arrowhead, a triangle's apex, a barb's feathered end).
+ */
+function anchorStart(cx, cy, dx, dy, len, anchor, stacked) {
+  if (!stacked || anchor === "tail") return [cx, cy];
+  if (anchor === "nose") return [cx - dx * len, cy - dy * len];
+  return [cx - dx * len / 2, cy - dy * len / 2];
+}
 /** Standard wind barb: staff points into the wind; 50 kt pennants, 10 kt barbs, 5 kt half-barbs. */
 function drawBarb(ctx, cx, cy, w, len, stroke, color, haloC, d, stacked) {
   const kt = Math.round(w.sp * KT_PER_MS / 5) * 5;
   if (kt < 5) { ctx.strokeStyle = color; ctx.lineWidth = stroke * 0.8; ctx.beginPath(); ctx.arc(cx, cy, len * 0.18, 0, 7); ctx.stroke(); return; }
   const a = w.d * Math.PI / 180, dx = Math.sin(a), dy = -Math.cos(a);            // toward where the wind comes from
-  const sx = stacked ? cx - dx * len / 2 : cx, sy = stacked ? cy - dy * len / 2 : cy;
+  // Tail = the plain (station) end, nose = the feathered end, which faces into the wind.
+  const [sx, sy] = anchorStart(cx, cy, dx, dy, len, d.anchor, stacked);
   const ex = sx + dx * len, ey = sy + dy * len;
   const px = -dy, py = dx;                                                        // feathers on the clockwise side
   const fl = len * 0.42 * d.headScale, step = len * 0.15;
@@ -818,7 +834,11 @@ function buildKnobs(pane) {
     host.appendChild(det);
   });
 }
-function setKnob(pane, key, value) { pane.design[key] = value; savePanes(); scheduleRender(); }
+function setKnob(pane, key, value) {
+  pane.design[key] = value;
+  if (key === "glyph") { Object.assign(pane.design, GLYPH_DEFAULTS[value]); buildKnobs(pane); }
+  savePanes(); scheduleRender();
+}
 function addPane(name, design, after) {
   const p = makePane(name, design);
   if (after) { panes.splice(panes.indexOf(after) + 1, 0, p); after.el.after(p.el); }
@@ -829,7 +849,7 @@ function exportPane(p) {
   const changed = Object.fromEntries(Object.entries(p.design).filter(([k, v]) => DEFAULT_DESIGN[k] !== v));
   return { name: p.name, changedFromApp: changed, design: p.design };
 }
-function savePanes() { store("panes-v3", panes.map(p => ({ name: p.name, design: p.design }))); }
+function savePanes() { store("panes-v5", panes.map(p => ({ name: p.name, design: p.design }))); }
 function copyText(text, msg) {
   navigator.clipboard?.writeText(text).then(() => toast(msg), () => showExport(text)) ?? showExport(text);
 }
@@ -940,7 +960,7 @@ async function search() {
   const g = load("global") || {};
   Object.assign(S, { models: g.models || S.models, hour: g.hour ?? S.hour, altLo: g.altLo ?? S.altLo, altHi: g.altHi ?? S.altHi, unit: g.unit || S.unit, tempUnit: g.tempUnit || S.tempUnit, panX: g.panX || 0, panY: g.panY || 0,
     ref: g.ref || S.ref, ceiling: g.ceiling || S.ceiling, layer: g.layer || S.layer, chrome: g.chrome || S.chrome });
-  const saved = load("panes-v3");
+  const saved = load("panes-v5");
   (saved?.length ? saved : EXAMPLES).forEach(x => addPane(x.name, x.design));
 
   S.live = await detectLive();

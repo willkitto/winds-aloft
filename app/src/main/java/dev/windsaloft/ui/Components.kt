@@ -1,6 +1,7 @@
 package dev.windsaloft.ui
 
 import androidx.compose.foundation.Canvas
+import dev.windsaloft.data.ArrowAnchor
 import dev.windsaloft.wind.CloudLayer
 import dev.windsaloft.data.TempUnit
 import dev.windsaloft.data.ArrowColor
@@ -378,17 +379,16 @@ fun PinPanel(
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 if (s.showClouds && profiles.isNotEmpty()) {
                     // Exact layer bases and tops, readable even with the table closed.
-                    // One line per model when comparing.
-                    val clouds = profiles.joinToString("\n") { p ->
-                        (if (s.comparing) OpenMeteo.short(p.modelId) + ": " else "☁ ") + Format.clouds(p.clouds, short = s.comparing)
+                    // One line per model when comparing (so a long list can't push the next model out of view).
+                    profiles.forEach { p ->
+                        Text(
+                            (if (s.comparing) OpenMeteo.short(p.modelId) + ": " else "☁ ") + Format.clouds(p.clouds, short = s.comparing),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = if (s.comparing) 1 else 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
-                    Text(
-                        clouds,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = profiles.size,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
             }
             if (state.pinLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -608,6 +608,12 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(settings.showClouds, { onChange(settings.copy(showClouds = !settings.showClouds)) },
                         label = { Text("Show cloud bases & tops") })
+                }
+                Section("Arrow on the column line")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ArrowAnchor.entries.forEach { a ->
+                        FilterChip(settings.arrowAnchor == a, { onChange(settings.copy(arrowAnchor = a)) }, label = { Text(a.label) })
+                    }
                 }
                 Section("Arrow layout")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

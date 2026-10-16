@@ -17,6 +17,12 @@ enum class MapLayer(val label: String) { TOPO("Topo"), STREETS("Streets"), SATEL
 /** STACKED: a vertical column per forecast source, one row per altitude (low at the bottom). FAN: all arrows share one origin. */
 enum class ArrowLayout(val label: String) { STACKED("Stacked"), FAN("Fan") }
 
+/**
+ * Which end of an arrow sits on the column's centre line. TAIL is a windsock: attached at its upwind
+ * end, streaming downwind. NOSE puts the arrowhead on the line; CENTRE centres the arrow on it.
+ */
+enum class ArrowAnchor(val label: String) { TAIL("Tail (windsock)"), NOSE("Nose"), CENTRE("Centre") }
+
 /** What arrow colour shows. AUTO: altitude, or the model when comparing. */
 enum class ArrowColor(val label: String) { AUTO("Auto"), ALTITUDE("Altitude"), SPEED("Speed"), TEMPERATURE("Temperature") }
 
@@ -38,6 +44,7 @@ data class Settings(
     val tempUnit: TempUnit = TempUnit.C,
     val showTemperature: Boolean = true,
     val showClouds: Boolean = true,
+    val arrowAnchor: ArrowAnchor = ArrowAnchor.TAIL,
 ) {
     val primaryModelId: String get() = modelIds.first()
     val comparing: Boolean get() = modelIds.size > 1
@@ -69,6 +76,7 @@ class Prefs(context: Context) {
             tempUnit = enumOr(sp.getString("tempUnit", null), d.tempUnit),
             showTemperature = sp.getBoolean("showTemp", d.showTemperature),
             showClouds = sp.getBoolean("showClouds", d.showClouds),
+            arrowAnchor = enumOr(sp.getString("arrowAnchor", null), d.arrowAnchor),
         )
     }
 
@@ -83,6 +91,7 @@ class Prefs(context: Context) {
         .putString("tempUnit", s.tempUnit.name)
         .putBoolean("showTemp", s.showTemperature)
         .putBoolean("showClouds", s.showClouds)
+        .putString("arrowAnchor", s.arrowAnchor.name)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {

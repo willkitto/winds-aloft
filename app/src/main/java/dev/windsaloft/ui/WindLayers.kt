@@ -32,9 +32,8 @@ fun buildColumns(state: UiState, profiles: List<ModelProfile>): List<WindColumn>
             label = if (s.comparing) OpenMeteo.short(p.modelId) else null,
             color = if (s.comparing) ModelColors.argb(slot) else null,
             winds = p.winds.map { it.second },
-            clouds = state.pinForecasts[p.modelId]?.cloudLayers(
-                state.selectedEpoch, s.altitudeRef, state.altRangeK.first * 1000, state.altRangeK.last * 1000,
-            ),
+            // All layers up to the ceiling: those outside the shown altitudes get markers on the map.
+            clouds = p.clouds,
         )
     }
 }

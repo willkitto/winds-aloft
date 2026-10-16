@@ -66,6 +66,7 @@ class ScreenshotTest {
             listOf(
                 CloudSample(elevation + 300, 0.0), CloudSample(2200.0, 15.0), CloudSample(2350.0, 70.0), CloudSample(2850.0, 65.0),
                 CloudSample(3000.0, 5.0), CloudSample(3700.0, 0.0), CloudSample(3820.0, 40.0), CloudSample(3980.0, 0.0),
+                CloudSample(4500.0, 0.0), CloudSample(4700.0, 90.0), CloudSample(5000.0, 95.0), CloudSample(5200.0, 0.0),
             )
         }
         return ForecastPoint(at, elevation, hours.toLongArray(), profiles, clouds)
@@ -115,6 +116,7 @@ class ScreenshotTest {
                         map.windOverlay.tempLabel = { c -> settings.tempUnit.format(c) }
                         map.windOverlay.colorMode = settings.arrowColor
                         map.windOverlay.showClouds = settings.showClouds
+                        map.windOverlay.altitudesFt = state.altitudesFt
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
                     SearchBar(

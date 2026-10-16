@@ -159,6 +159,8 @@ fun WindsAloftApp(vm: MainViewModel) {
                 map.windOverlay.colorMode = s.arrowColor
                 map.windOverlay.showTemperature = s.showTemperature
                 map.windOverlay.showClouds = s.showClouds
+                map.windOverlay.anchor = s.arrowAnchor
+                map.windOverlay.altitudesFt = state.altitudesFt
                 map.windOverlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
                 map.windOverlay.tempLabel = { c -> s.tempUnit.format(c) }
                 it.invalidate()
