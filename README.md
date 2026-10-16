@@ -30,9 +30,10 @@ Phone turned on its side (default *Along the long side*): the chart keeps runnin
 
 ## Features
 - **Forecast-time slider**: from now out to about 72–90 h, in 1 h steps. Shows local time and Zulu time. The track previews what's coming: night is shaded, a tiny graph shows the ground wind (dotted line: gusts), and a thin bar darkens where there's cloud. Tap or drag anywhere on it.
-- **Two-day page** (the *48h* button): the next 48 hours on its own page.
-  - *Winds*: one strip per altitude, stacked like the map chart. The line's height is the speed, and it's drawn with arrows showing the direction. Each strip is labelled with its high and low, and shaded grey where that model has cloud at that altitude. Tap the chart to move the selected time and read every altitude's wind there. Tap a model chip, or swipe across the chart, to switch models instantly; every model is downloaded when the page opens.
-  - *Clouds, all models*: every model's cloud forecast as a small time-by-altitude picture, one under another, with the layers at the selected time beside each name. This is the quickest way to compare cloud bases across models.
+- **Two-day page** (the *48h* button): the next 48 hours on its own page, 24 hours to a screen.
+  - **Moving around:** drag or tap on a chart to move the time bar. Drag the hour labels, or push the time bar past the edge, to scroll to the other day; *First 24 h* and *Next 24 h* jump. Day and night are shaded differently (☀ / ☾), in light and dark mode.
+  - *Winds*: one strip per altitude, stacked like the map chart. The line's height is the speed, and it's drawn with arrows showing the direction. Each strip is labelled with its high and low for the hours on screen, and shaded grey where that model has cloud at that altitude. The time bar shows every altitude's direction, speed (gust) and temperature. Model chips switch between the models picked in Settings.
+  - *Clouds, all models*: each selected model's cloud forecast as a small time-by-altitude picture, one under another, with the layers at the time bar beside each name. This is the quickest way to compare cloud bases across models.
 - **Altitude range slider**: picks which 1,000 ft levels to draw and list, from 0 up to the ceiling you set.
 - **MSL or AGL** altitudes.
 - **Compare any number of models**, in four styles. The style button on the map switches between them, and so does Settings → *Comparing models*:
@@ -50,7 +51,7 @@ Phone turned on its side (default *Along the long side*): the chart keeps runnin
 - **Move the chart**: drag the ⊕ handle at the bottom of the chart to put the chart anywhere on the map. The forecast spot keeps its pin, and a dashed line joins the chart to it. Drop the chart near the pin to snap it back, or use *Put the chart back on the forecast spot* in the location panel.
 - **Hide panels**: the hide button switches from all panels to the forecast-time slider only. From there you can go back to all panels or hide everything; *Show panels* brings them back.
 - **Map rotation**: rotate the map with two fingers. The chart stays upright, and each symbol turns so it matches its real direction on the rotated map. The compass button in the top-right corner shows which way north is; tap it to turn the map north-up again.
-- **My location** button.
+- **My location** button: moves the map to where you are. It doesn't fetch winds; long-press the spot for that, as anywhere else.
 - **Map styles** (the layers button picks one):
   - Topo (OpenTopoMap), Streets (OpenStreetMap), Outdoors (CyclOSM, with terrain and trails) and Topo (Esri).
   - Satellite (Esri World Imagery), plus *Satellite with labels* (imagery with place names and borders on top).

@@ -125,20 +125,18 @@ fun WindsAloftApp(vm: MainViewModel) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
+    // Only moves the map to where you are; getting winds there is still a long-press, like anywhere else.
     fun goToMyLocation() {
         map.myLocation.enableMyLocation()
+        val zoom = maxOf(map.mapView.zoomLevelDouble, 11.0)
         val fix = map.myLocation.myLocation
         if (fix != null) {
-            vm.setPin(LatLon(fix.latitude, fix.longitude), "My location")
-            vm.moveCamera(LatLon(fix.latitude, fix.longitude), 10.0)
+            vm.moveCamera(LatLon(fix.latitude, fix.longitude), zoom)
         } else {
             vm.message("Waiting for a location fix…")
             map.myLocation.runOnFirstFix {
                 val l = map.myLocation.myLocation ?: return@runOnFirstFix
-                map.mapView.post {
-                    vm.setPin(LatLon(l.latitude, l.longitude), "My location")
-                    vm.moveCamera(LatLon(l.latitude, l.longitude), 10.0)
-                }
+                map.mapView.post { vm.moveCamera(LatLon(l.latitude, l.longitude), zoom) }
             }
         }
     }
@@ -201,8 +199,9 @@ fun WindsAloftApp(vm: MainViewModel) {
     }
 
     // ---- Derived wind data for the selected time + altitudes ----
-    val profiles = remember(state.pinForecasts, state.selectedEpoch, state.altRangeK, s) { buildProfiles(state) }
-    val columns = remember(profiles, s.comparing) { buildColumns(state, profiles) }
+    // Keyed on everything buildProfiles reads, including which model is isolated.
+    val profiles = remember(state.pinForecasts, state.selectedEpoch, state.altRangeK, s, state.isolatedModel) { buildProfiles(state) }
+    val columns = remember(profiles, s.comparing, state.isolatedModel) { buildColumns(state, profiles) }
 
     // ---- Panel pieces, arranged below for portrait or landscape ----
     val searchBar = @Composable { modifier: Modifier ->
@@ -223,7 +222,7 @@ fun WindsAloftApp(vm: MainViewModel) {
         SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.TIME_ONLY) }) {
             Icon(AppIcons.Fullscreen, contentDescription = "Hide panels (keep the time slider)")
         }
-        if (state.pin != null) SmallFloatingActionButton(onClick = { showTwoDay = true; vm.loadAllModels() }) {
+        if (state.pin != null) SmallFloatingActionButton(onClick = { showTwoDay = true }) {
             Text("48h", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
         }
         if (state.showingSeveral) SmallFloatingActionButton(onClick = vm::cycleChartStyle) {
@@ -446,7 +445,7 @@ fun WindsAloftApp(vm: MainViewModel) {
         )
     }
     if (showTwoDay && state.pin != null) {
-        TwoDayScreen(state = state, onDismiss = { showTwoDay = false }, onRetry = vm::loadAllModels)
+        TwoDayScreen(state = state, onDismiss = { showTwoDay = false })
     }
     if (showPlaces) {
         PlacesDialog(

@@ -16,6 +16,15 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
@@ -137,19 +146,71 @@ class ScreenshotTest {
     fun renderTwoDay() {
         val now = currentHourEpoch()
         val pin = LatLon(40.10, -105.20)
-        val settings = Settings(modelIds = sixModels.take(3))
-        val all = sixModels.mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6) }.toMap()
+        val settings = Settings(modelIds = sixModels.take(4) + "ncep_hrrr_conus")
         val state = UiState(
-            settings = settings, pin = pin, pinLabel = "Boulder, Colorado", pinForecasts = all.filterKeys { it in settings.modelIds },
-            moreForecasts = all.filterKeys { it !in settings.modelIds }, nowHourEpoch = now, hourOffset = 10,
-            unavailableModels = setOf("ncep_hrrr_conus"),
+            settings = settings, pin = pin, pinLabel = "Boulder, Colorado",
+            pinForecasts = sixModels.take(4).mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6) }.toMap(),
+            nowHourEpoch = now, hourOffset = 10, unavailableModels = setOf("ncep_hrrr_conus"),
         )
-        compose.setContent { WindsAloftTheme { TwoDayScreen(state, {}, {}) } }
+        compose.setContent { WindsAloftTheme { TwoDayScreen(state, {}) } }
         compose.waitForIdle()
         save("twoday_winds")
+        // Dragging across the chart moves the time bar; it doesn't switch models.
+        compose.onNode(hasContentDescription("Wind at each altitude", substring = true)).performTouchInput {
+            swipe(Offset(width * 0.3f, height * 0.5f), Offset(width * 0.55f, height * 0.5f), durationMillis = 400)
+        }
+        compose.waitForIdle()
+        assertTrue(compose.onAllNodesWithText("(+10 h)", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(compose.onAllNodesWithText("Wind at each altitude over the next 48 hours, NOAA GFS + HRRR", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() ||
+            compose.onAllNodes(hasContentDescription("NOAA GFS + HRRR", substring = true)).fetchSemanticsNodes().isNotEmpty())
+        compose.onNodeWithText("Next 24 h ›").performClick()
+        compose.mainClock.advanceTimeBy(1000)
+        compose.waitForIdle()
+        save("twoday_winds_day2")
         compose.onNodeWithText("Clouds, all models").performClick()
         compose.waitForIdle()
         save("twoday_clouds")
+    }
+
+    @Test
+    @Config(qualifiers = "+night")
+    fun renderTwoDayDark() {
+        val now = currentHourEpoch()
+        val pin = LatLon(40.10, -105.20)
+        val state = UiState(
+            settings = Settings(), pin = pin, pinLabel = "Boulder, Colorado",
+            pinForecasts = mapOf(Settings().primaryModelId to syntheticPoint(pin, 1580.0, now, 0.0)), nowHourEpoch = now, hourOffset = 4,
+        )
+        compose.setContent { WindsAloftTheme { TwoDayScreen(state, {}) } }
+        compose.waitForIdle()
+        save("twoday_dark")
+    }
+
+    /** Every change on the settings page redraws the preview. */
+    @Test
+    fun settingsPreviewFollowsChanges() {
+        val now = currentHourEpoch()
+        val pin = LatLon(40.10, -105.20)
+        var settings by androidx.compose.runtime.mutableStateOf(Settings())
+        val state = UiState(settings = settings, pin = pin, pinForecasts = mapOf(settings.primaryModelId to syntheticPoint(pin, 1580.0, now, 0.0)), nowHourEpoch = now, hourOffset = 3, altRangeK = 0..14)
+        val columns = buildColumns(state, buildProfiles(state))
+        compose.setContent { WindsAloftTheme { SettingsScreen(settings, { settings = it }, {}, columns, state.altitudesFt, "", {}) } }
+        compose.waitForIdle()
+        val before = capture()
+        compose.onNodeWithText("Barb").performClick()
+        compose.waitForIdle()
+        val after = capture()
+        assertFalse("preview should redraw when the symbol changes", before.sameAs(after))
+    }
+
+    private fun capture(): Bitmap {
+        val global = Class.forName("android.view.WindowManagerGlobal").getMethod("getInstance").invoke(null)
+        @Suppress("UNCHECKED_CAST")
+        val root = (global.javaClass.getDeclaredField("mViews").apply { isAccessible = true }.get(global) as List<android.view.View>).first()
+        // Just the top of the page, where the preview is.
+        val bmp = Bitmap.createBitmap(root.width, root.height / 3, Bitmap.Config.ARGB_8888)
+        root.draw(Canvas(bmp))
+        return bmp
     }
 
     @Test

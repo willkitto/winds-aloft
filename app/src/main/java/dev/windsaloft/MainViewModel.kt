@@ -70,10 +70,6 @@ data class UiState(
     val isolatedModel: String? = null,
     /** Regional models that don't cover the pinned spot. */
     val unavailableModels: Set<String> = emptySet(),
-    /** Forecasts for models that aren't selected, loaded for the two-day page so switching is instant. */
-    val moreForecasts: Map<String, ForecastPoint> = emptyMap(),
-    /** Models still downloading for the two-day page. */
-    val moreLoading: Set<String> = emptySet(),
 ) {
     /** The models drawn on the map and in the table: just the isolated one, or all selected. */
     val visibleModelIds: List<String>
@@ -81,8 +77,6 @@ data class UiState(
 
     /** More than one model on screen. */
     val showingSeveral: Boolean get() = visibleModelIds.size > 1
-
-    fun forecastFor(modelId: String): ForecastPoint? = pinForecasts[modelId] ?: moreForecasts[modelId]
 
     val selectedEpoch: Long get() = nowHourEpoch + hourOffset * 3600L
 
@@ -177,7 +171,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(
                 pin = location, pinLabel = name, pinForecasts = emptyMap(), pinFetchedAtMs = 0L, metars = emptyList(), metarsAtMs = 0L,
-                unavailableModels = emptySet(), moreForecasts = emptyMap(), moreLoading = emptySet(),
+                unavailableModels = emptySet(),
                 searchResults = emptyList(), pendingPin = null, chartAt = null,
                 recents = SavedPlace.pushRecent(it.recents, SavedPlace(name, location, System.currentTimeMillis())),
             )
@@ -321,45 +315,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val next = dev.windsaloft.data.ChartStyle.entries[(s.chartStyle.ordinal + 1) % dev.windsaloft.data.ChartStyle.entries.size]
         updateSettings(s.copy(chartStyle = next))
         _messages.tryEmit("Chart: ${next.label}")
-    }
-
-    private var moreJob: Job? = null
-
-    /**
-     * Loads every model for the pinned spot (saved copies first, then downloads when online), so the
-     * two-day page can switch models instantly and show all models' clouds side by side.
-     */
-    fun loadAllModels() {
-        val s = _state.value
-        val pin = s.pin ?: return
-        if (moreJob?.isActive == true) return
-        val todo = OpenMeteo.MODELS.map { it.id }.filter { it !in s.pinForecasts && it !in s.moreForecasts && it !in s.unavailableModels }
-        if (todo.isEmpty()) return
-        moreJob = viewModelScope.launch {
-            _state.update { it.copy(moreLoading = todo.toSet()) }
-            coroutineScope {
-                todo.forEach { model ->
-                    launch {
-                        try {
-                            val saved = withContext(Dispatchers.IO) { cache.load(pin, model) }
-                                ?.let { e -> runCatching { OpenMeteo.parse(e.json, listOf(pin)).first() }.getOrNull()?.let { it to e.fetchedAtMs } }
-                            if (saved != null) _state.update { if (it.pin == pin) it.copy(moreForecasts = it.moreForecasts + (model to saved.first)) else it }
-                            val stale = saved == null || System.currentTimeMillis() - saved.second > 30 * 60_000L
-                            if (stale && net.isOnline()) {
-                                val fp = download(pin, model, s.settings.ceilingFt)
-                                _state.update { if (it.pin == pin) it.copy(moreForecasts = it.moreForecasts + (model to fp)) else it }
-                            }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            if (OpenMeteo.isNotCovered(e)) _state.update { it.copy(unavailableModels = it.unavailableModels + model) }
-                        } finally {
-                            _state.update { it.copy(moreLoading = it.moreLoading - model) }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // ---- Saved places + history ----
@@ -515,10 +470,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         prefs.saveAltRange(_state.value.altRangeK)
         if (new.showMetars && !old.showMetars) _state.value.pin?.let { loadMetars(it) }
-        if (new.modelIds != old.modelIds) {
-            // Selected models move into the main set; their data may already be here from the two-day page.
-            _state.update { st -> st.copy(pinForecasts = st.pinForecasts + st.moreForecasts.filterKeys { it in new.modelIds }) }
-        }
         if (old.modelIds != new.modelIds || old.ceilingFt != new.ceilingFt) {
             _state.value.pin?.let { loadPin(it, announceOffline = false) }
             refreshSavedTimes()

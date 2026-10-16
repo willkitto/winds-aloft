@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -66,7 +67,9 @@ fun ForecastTimeSlider(state: UiState, onHourOffset: (Int) -> Unit, modifier: Mo
     val accent = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.surfaceVariant
     val ink = MaterialTheme.colorScheme.onSurfaceVariant
-    val night = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    // Night has to stand out in both themes: darker in dark mode, a blue-grey wash in light mode.
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val night = if (dark) Color.Black.copy(alpha = 0.5f) else Color(0xFF1E3054).copy(alpha = 0.13f)
     val thumbRing = MaterialTheme.colorScheme.surface
     val measurer = rememberTextMeasurer()
     val pad = 12.dp

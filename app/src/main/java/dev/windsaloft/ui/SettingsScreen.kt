@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -377,7 +378,8 @@ private fun ChartPreview(s: Settings, columns: List<WindColumn>, altitudes: List
     overlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
     overlay.tempLabel = { c -> s.tempUnit.format(c) }
     Box(modifier.height(210.dp).clip(RoundedCornerShape(16.dp)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))) {
-        Canvas(Modifier.fillMaxSize()) {
+        // The overlay's settings aren't Compose state, so key the canvas on them: any change redraws it.
+        key(s, cols, alts) { Canvas(Modifier.fillMaxSize()) {
             // A soft topo-like ground with a few contour lines, standing in for the map.
             drawRect(Color(0xFFE7E9DC))
             val contour = Color(0xFFCDD1BB)
@@ -386,7 +388,7 @@ private fun ChartPreview(s: Settings, columns: List<WindColumn>, altitudes: List
             }
             drawLine(Color(0xFFF3DD8E), Offset(0f, size.height * 0.78f), Offset(size.width, size.height * 0.62f), strokeWidth = 4f * density)
             drawIntoCanvas { c -> overlay.drawPreview(c.nativeCanvas, size.width, size.height) }
-        }
+        } }
         Text(
             "Preview", style = MaterialTheme.typography.labelMedium, color = Color.White,
             modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(Color(0x99101820), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
