@@ -18,7 +18,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # The legacy "tools" package (the action's default) no longer exists; platform-tools is enough.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - uses: gradle/actions/setup-gradle@v4
 
