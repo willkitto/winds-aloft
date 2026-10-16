@@ -22,28 +22,72 @@ import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
-/** Esri World Imagery uses z/y/x ordering, which the stock XYTileSource doesn't support. */
-private object EsriWorldImagery : OnlineTileSourceBase(
-    "EsriWorldImagery", 0, 19, 256, "",
-    arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"),
-    "Imagery © Esri, Maxar, Earthstar Geographics",
+/** ArcGIS tile services use z/y/x ordering, which the stock XYTileSource doesn't support. */
+private class ArcGisTiles(name: String, maxZoom: Int, url: String, attribution: String) : OnlineTileSourceBase(
+    name, 0, maxZoom, 256, "", arrayOf(url), attribution,
 ) {
     override fun getTileURLString(index: Long): String =
         baseUrl + MapTileIndex.getZoom(index) + "/" + MapTileIndex.getY(index) + "/" + MapTileIndex.getX(index)
 }
 
+private val EsriWorldImagery = ArcGisTiles(
+    "EsriWorldImagery", 19, "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/",
+    "Imagery © Esri, Maxar, Earthstar Geographics",
+)
+
+/** Place names and borders on a transparent background, drawn over the imagery for "Satellite with labels". */
+private val EsriPlaceLabels = ArcGisTiles(
+    "EsriPlaceLabels", 19, "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/",
+    "Labels © Esri",
+)
+
+private val EsriTopo = ArcGisTiles(
+    "EsriWorldTopo", 19, "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/",
+    "© Esri, HERE, Garmin, FAO, NOAA, USGS",
+)
+
+/** FAA VFR sectional charts (US, public domain): airspace, airports and obstacles. Published up to zoom 12. */
+private val FaaSectional = ArcGisTiles(
+    "FaaVfrSectional", 12, "https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile/",
+    "FAA Aeronautical Information Services",
+)
+
+private val UsgsTopo = ArcGisTiles(
+    "UsgsTopo", 16, "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/", "USGS The National Map",
+)
+
+private val UsgsImageryTopo = ArcGisTiles(
+    "UsgsImageryTopo", 16, "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/", "USGS The National Map",
+)
+
+private val CyclOsm = org.osmdroid.tileprovider.tilesource.XYTileSource(
+    "CyclOSM", 0, 18, 256, ".png",
+    arrayOf("https://a.tile-cyclosm.openstreetmap.fr/cyclosm/", "https://b.tile-cyclosm.openstreetmap.fr/cyclosm/", "https://c.tile-cyclosm.openstreetmap.fr/cyclosm/"),
+    "© OpenStreetMap contributors · CyclOSM",
+)
+
 val MapLayer.tileSource: ITileSource
     get() = when (this) {
         MapLayer.STREETS -> TileSourceFactory.MAPNIK
         MapLayer.TOPO -> TileSourceFactory.OpenTopo
-        MapLayer.SATELLITE -> EsriWorldImagery
+        MapLayer.OUTDOORS -> CyclOsm
+        MapLayer.ESRI_TOPO -> EsriTopo
+        MapLayer.SATELLITE, MapLayer.HYBRID -> EsriWorldImagery
+        MapLayer.FAA_VFR -> FaaSectional
+        MapLayer.USGS_TOPO -> UsgsTopo
+        MapLayer.USGS_IMAGERY -> UsgsImageryTopo
     }
 
 val MapLayer.attribution: String
     get() = when (this) {
         MapLayer.STREETS -> "© OpenStreetMap contributors"
         MapLayer.TOPO -> "© OpenStreetMap contributors, SRTM · © OpenTopoMap (CC-BY-SA)"
+        MapLayer.OUTDOORS -> "© OpenStreetMap contributors · CyclOSM"
+        MapLayer.ESRI_TOPO -> "© Esri, HERE, Garmin, FAO, NOAA, USGS"
         MapLayer.SATELLITE -> "Imagery © Esri, Maxar, Earthstar Geographics"
+        MapLayer.HYBRID -> "Imagery and labels © Esri, Maxar, Earthstar Geographics"
+        MapLayer.FAA_VFR -> "FAA Aeronautical Information Services · not for navigation"
+        MapLayer.USGS_TOPO, MapLayer.USGS_IMAGERY -> "USGS The National Map"
     }
 
 /**
@@ -166,9 +210,28 @@ class MapHandle(context: Context, initial: Camera?) {
         mapView.controller.animateTo(mapView.mapCenter, mapView.zoomLevelDouble, 400L, 0f)
     }
 
+    private val appContext = context.applicationContext
+    private var labels: org.osmdroid.views.overlay.TilesOverlay? = null
+
     fun setLayer(layer: MapLayer) {
         val src = layer.tileSource
         if (mapView.tileProvider.tileSource.name() != src.name()) mapView.setTileSource(src)
+        // "Satellite with labels" lays a transparent labels layer over the imagery, under the chart.
+        val wantLabels = layer == MapLayer.HYBRID
+        if (wantLabels && labels == null) {
+            val provider = MapTileProviderBasic(SimpleRegisterReceiver(appContext), Connectivity(appContext), EsriPlaceLabels, appContext, null)
+            labels = org.osmdroid.views.overlay.TilesOverlay(provider, appContext).apply {
+                loadingBackgroundColor = android.graphics.Color.TRANSPARENT
+                loadingLineColor = android.graphics.Color.TRANSPARENT
+            }
+            mapView.overlays.add(0, labels)
+            mapView.invalidate()
+        } else if (!wantLabels && labels != null) {
+            mapView.overlays.remove(labels)
+            labels?.onDetach(mapView)
+            labels = null
+            mapView.invalidate()
+        }
     }
 }
 

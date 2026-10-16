@@ -17,7 +17,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import java.util.Locale
 
-data class WeatherModel(val id: String, val label: String, val short: String)
+/** [region] is shown for models that only cover part of the world (they return nothing elsewhere). */
+data class WeatherModel(val id: String, val label: String, val short: String, val region: String? = null)
 
 class ApiException(message: String) : Exception(message)
 
@@ -29,12 +30,21 @@ object OpenMeteo {
     val MODELS = listOf(
         WeatherModel("best_match", "Best match (auto)", "Best"),
         WeatherModel("ncep_gfs_seamless", "NOAA GFS + HRRR", "GFS"),
-        WeatherModel("ncep_hrrr_conus", "NOAA HRRR (US only, ~2 days)", "HRRR"),
+        WeatherModel("ncep_hrrr_conus", "NOAA HRRR", "HRRR", "US, about 2 days"),
         WeatherModel("ecmwf_ifs025", "ECMWF IFS 0.25°", "ECMWF"),
         WeatherModel("icon_seamless", "DWD ICON", "ICON"),
         WeatherModel("gem_seamless", "Canada GEM", "GEM"),
         WeatherModel("ukmo_seamless", "UK Met Office", "UKMO"),
+        WeatherModel("meteofrance_seamless", "Météo-France ARPEGE + AROME", "MF"),
+        WeatherModel("jma_seamless", "Japan JMA", "JMA"),
+        WeatherModel("cma_grapes_global", "China CMA GRAPES", "CMA"),
+        WeatherModel("bom_access_global", "Australia BOM ACCESS-G", "BOM"),
     )
+
+    fun model(id: String): WeatherModel? = MODELS.firstOrNull { it.id == id }
+
+    /** True for the API's answer when a regional model doesn't cover the requested spot. */
+    fun isNotCovered(e: Throwable): Boolean = e.message?.contains("No data is available for this location", ignoreCase = true) == true
 
     fun label(id: String): String = MODELS.firstOrNull { it.id == id }?.label ?: id
 

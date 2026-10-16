@@ -101,7 +101,7 @@ class OpenMeteoTest {
 
     @Test
     fun temperatureUsesUnitLetterNotDegreeSign() {
-        assertEquals("-3C", TempUnit.C.format(-3.2))
-        assertEquals("27F", TempUnit.F.format(-2.8))
+        assertEquals("-3 c", TempUnit.C.format(-3.2))
+        assertEquals("27 f", TempUnit.F.format(-2.8))
     }
 }

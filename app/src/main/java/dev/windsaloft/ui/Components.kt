@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -73,6 +74,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -177,12 +179,7 @@ fun SearchBar(
 @Composable
 private fun TimeControl(state: UiState, onHourOffset: (Int) -> Unit) {
     LabelRow("Forecast", "${Format.time(state.selectedEpoch)}  (+${state.hourOffset} h)")
-    Slider(
-        value = state.hourOffset.toFloat(),
-        onValueChange = { onHourOffset(it.roundToInt()) },
-        valueRange = 0f..state.maxHourOffset.coerceAtLeast(1).toFloat(),
-        modifier = Modifier.height(36.dp),
-    )
+    ForecastTimeSlider(state, onHourOffset)
 }
 
 /** Only the forecast-time slider, for stepping through hours with the map otherwise clear. */
@@ -216,6 +213,7 @@ fun ControlsCard(
     onHourOffset: (Int) -> Unit,
     onAltRange: (IntRange) -> Unit,
     modifier: Modifier = Modifier,
+    onModelTapped: (String) -> Unit = {},
 ) {
     val s = state.settings
     val ceilK = s.ceilingFt / 1000
@@ -245,10 +243,10 @@ fun ControlsCard(
                     stops = (0..20).map { Color(AltitudeColors.speed(50.0 * it / 20)) },
                     labels = listOf(0.0, 25.0, 50.0).map { Format.speed(it / KT_PER_MS, s.unit) + if (it == 50.0) "+ ${s.unit.label}" else "" },
                 )
-                s.comparing -> ModelLegend(s.modelIds)
+                s.comparing -> ModelLegend(s.modelIds, state.isolatedModel, state.unavailableModels, onModelTapped)
                 else -> AltitudeScale(s.ceilingFt, state.altRangeK)
             }
-            if (s.comparing && s.arrowColor != ArrowColor.AUTO) ModelLegend(s.modelIds)
+            if (s.comparing && s.arrowColor != ArrowColor.AUTO) ModelLegend(s.modelIds, state.isolatedModel, state.unavailableModels, onModelTapped)
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 SpeedLegend(s.unit, s.arrowLayout)
                 Spacer(Modifier.width(12.dp))
@@ -268,19 +266,25 @@ fun ControlsCard(
 /** Colour key for compared models (replaces the altitude colour bar in comparison mode). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ModelLegend(modelIds: List<String>) {
-    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+private fun ModelLegend(modelIds: List<String>, isolated: String?, unavailable: Set<String>, onTap: (String) -> Unit) {
+    // Tap a model to show only that one; tap it again (or another) to change back.
+    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         modelIds.forEachIndexed { i, id ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            val dim = (isolated != null && isolated != id) || id in unavailable
+            Row(
+                Modifier.clip(RoundedCornerShape(6.dp)).clickable { onTap(id) }.padding(horizontal = 4.dp, vertical = 3.dp)
+                    .then(if (dim) Modifier.alpha(0.4f) else Modifier),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 val color = Color(ModelColors.argb(i))
                 Canvas(Modifier.width(18.dp).height(10.dp)) {
                     drawLine(color, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
                 }
                 Spacer(Modifier.width(5.dp))
                 Text(
-                    OpenMeteo.short(id),
+                    OpenMeteo.short(id) + if (id in unavailable) " (n/a here)" else "",
                     style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = if (isolated == id) FontWeight.Bold else FontWeight.SemiBold,
                 )
             }
         }
@@ -418,7 +422,13 @@ fun PinPanel(
                 )
                 val sub = buildList {
                     if (elevation != null) add("Elev ${Format.elevation(elevation)}")
-                    add(if (s.comparing) "${s.modelIds.size} models" else OpenMeteo.label(s.primaryModelId))
+                    add(
+                        when {
+                            state.isolatedModel != null && s.comparing -> "${OpenMeteo.label(state.isolatedModel)} only (tap its name for all)"
+                            s.comparing -> "${s.modelIds.size} models"
+                            else -> OpenMeteo.label(s.primaryModelId)
+                        },
+                    )
                     if (state.pinFetchedAtMs > 0) add(Format.age(state.pinFetchedAtMs))
                     if (!state.online) add("Offline")
                 }.joinToString(" · ")
@@ -438,7 +448,8 @@ fun PinPanel(
                 if (s.showClouds && profiles.isNotEmpty()) {
                     // Exact layer bases and tops, readable even with the table closed.
                     // One line per model when comparing (so a long list can't push the next model out of view).
-                    profiles.forEach { p ->
+                    // At most three lines here; the two-day page shows every model's clouds.
+                    profiles.take(3).forEach { p ->
                         Text(
                             (if (s.comparing) OpenMeteo.short(p.modelId) + ": " else "☁ ") + Format.clouds(p.clouds, short = s.comparing),
                             style = MaterialTheme.typography.bodySmall,
@@ -478,11 +489,16 @@ fun PinPanel(
             MetarSection(state)
             return@Card
         }
-        if (s.comparing) {
-            CompareHeader(profiles, s.unit)
-            val rows = profiles.first().winds.indices.reversed().toList()
-            LazyColumn(Modifier.heightIn(max = 200.dp)) {
-                items(rows, key = { it }) { i -> CompareRow(profiles, i, s) }
+        if (profiles.size > 1) {
+            // More than three models: fixed-width columns that scroll sideways instead of squeezing.
+            val wide = profiles.size > 3
+            val table = if (wide) Modifier.horizontalScroll(rememberScrollState()).width((ColAltCompare.value + 100 * profiles.size + ColSpread.value + 24).dp) else Modifier.fillMaxWidth()
+            Column(table) {
+                CompareHeader(profiles, s.unit)
+                val rows = profiles.first().winds.indices.reversed().toList()
+                LazyColumn(Modifier.heightIn(max = 200.dp)) {
+                    items(rows, key = { it }) { i -> CompareRow(profiles, i, s) }
+                }
             }
         } else {
             ProfileHeader(s.unit)
@@ -682,177 +698,3 @@ fun WindGlyph(dirFromDeg: Double, color: Color, size: Dp = 18.dp) {
     }
 }
 
-// ---------------------------------------------------------------- Settings
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: () -> Unit, offlineInfo: String = "") {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
-        title = { Text("Settings") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Section("Wind speed units")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SpeedUnit.entries.forEach { u ->
-                        FilterChip(settings.unit == u, { onChange(settings.copy(unit = u)) }, label = { Text(u.label) })
-                    }
-                }
-                Section("Altitude reference")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(settings.altitudeRef == AltitudeRef.MSL, { onChange(settings.copy(altitudeRef = AltitudeRef.MSL)) },
-                        label = { Text("MSL (sea level)") })
-                    FilterChip(settings.altitudeRef == AltitudeRef.AGL, { onChange(settings.copy(altitudeRef = AltitudeRef.AGL)) },
-                        label = { Text("AGL (ground)") })
-                }
-                Section("Altitude ceiling")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Settings.CEILINGS.forEach { c ->
-                        FilterChip(settings.ceilingFt == c, { onChange(settings.copy(ceilingFt = c)) },
-                            label = { Text("${Format.feet(c)} ft") })
-                    }
-                }
-                Section("Map style")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MapLayer.entries.forEach { l ->
-                        FilterChip(settings.layer == l, { onChange(settings.copy(layer = l)) }, label = { Text(l.label) })
-                    }
-                }
-                Section("Chart direction")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    dev.windsaloft.data.ChartOrientation.entries.forEach { o ->
-                        FilterChip(settings.chartOrientation == o, { onChange(settings.copy(chartOrientation = o)) }, label = { Text(o.label) })
-                    }
-                }
-                Text(
-                    "Along the long side: turn the phone sideways and the chart keeps running along the phone, using the most room.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Section("Wind symbol")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Glyph.entries.forEach { g ->
-                        // Picking a symbol also applies its natural anchor (windsock, tetrahedron, chart barb).
-                        FilterChip(settings.glyph == g, { onChange(settings.copy(glyph = g, arrowAnchor = g.defaultAnchor)) },
-                            label = { Text(g.label) })
-                    }
-                }
-                Section("On the column line")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ArrowAnchor.entries.forEach { a ->
-                        FilterChip(settings.arrowAnchor == a, { onChange(settings.copy(arrowAnchor = a)) }, label = { Text(a.label) })
-                    }
-                }
-                Text(
-                    when (settings.glyph) {
-                        Glyph.ARROW -> "Arrows point downwind. Tail on the line works like a windsock."
-                        Glyph.TRIANGLE -> "Triangles point into the wind. Nose on the line works like a landing tetrahedron."
-                        Glyph.BARB -> "Barbs point into the wind, feathers at the far end. Tail (station) on the line is the weather-chart convention."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Section("Colour")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ArrowColor.entries.forEach { c ->
-                        FilterChip(settings.arrowColor == c, { onChange(settings.copy(arrowColor = c)) }, label = { Text(c.label) })
-                    }
-                }
-                Section("Numbers on the map")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(settings.showSpeed, { onChange(settings.copy(showSpeed = !settings.showSpeed)) }, label = { Text("Speed") })
-                    FilterChip(settings.showDirection, { onChange(settings.copy(showDirection = !settings.showDirection)) },
-                        label = { Text("Direction (from)") })
-                    FilterChip(settings.showTemperature, { onChange(settings.copy(showTemperature = !settings.showTemperature)) },
-                        label = { Text("Temperature") })
-                }
-                Section("Temperature unit")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TempUnit.entries.forEach { u ->
-                        FilterChip(settings.tempUnit == u, { onChange(settings.copy(tempUnit = u)) }, label = { Text(u.label) })
-                    }
-                }
-                Section("Observed winds")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(settings.showMetars, { onChange(settings.copy(showMetars = !settings.showMetars)) },
-                        label = { Text("Nearby airport reports (METAR)") })
-                }
-                Text(
-                    "The latest reports from airports near the forecast spot: the wind actually blowing at the ground now, " +
-                        "with gusts in brackets, on the map and in the location panel.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Section("Cloud layers")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(settings.showClouds, { onChange(settings.copy(showClouds = !settings.showClouds)) },
-                        label = { Text("Show cloud bases & tops") })
-                }
-                Section("Layout")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ArrowLayout.entries.forEach { l ->
-                        FilterChip(settings.arrowLayout == l, { onChange(settings.copy(arrowLayout = l)) }, label = { Text(l.label) })
-                    }
-                }
-                Section("Forecast models (pick up to ${Settings.MAX_MODELS} to compare)")
-                OpenMeteo.MODELS.forEach { m ->
-                    val slot = settings.modelIds.indexOf(m.id)
-                    val selected = slot >= 0
-                    val enabled = selected || settings.modelIds.size < Settings.MAX_MODELS
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .toggleable(
-                                value = selected,
-                                enabled = enabled && !(selected && settings.modelIds.size == 1),
-                                onValueChange = { on ->
-                                    onChange(settings.copy(modelIds = if (on) settings.modelIds + m.id else settings.modelIds - m.id))
-                                },
-                            )
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(checked = selected, onCheckedChange = null, enabled = enabled)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            m.label,
-                            Modifier.weight(1f),
-                            color = if (enabled) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (selected && settings.comparing) {
-                            Canvas(Modifier.size(12.dp)) { drawCircle(Color(ModelColors.argb(slot))) }
-                        }
-                    }
-                }
-                Text(
-                    "Each picked model gets its own column of arrows on the map and in the table.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Section("Offline")
-                Text(
-                    "Winds for your saved places are downloaded whenever you're online (and refreshed when over an hour " +
-                        "old), and the last 20 spots you looked at are kept too, so they work in the plane with no " +
-                        "signal. Map tiles you've looked at are saved on the phone: before you go, open your drop zone " +
-                        "and zoom around it once while online." + if (offlineInfo.isNotEmpty()) "\n$offlineInfo" else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "Each altitude is a row, lowest at the pin; a longer symbol is a stronger wind. Directions are " +
-                        "shown in degrees (°) the wind comes from; temperatures end in C or F. The bottom SFC row is the " +
-                        "ground wind, with forecast gusts in brackets: 4 (18). Long-press the map to " +
-                        "move the forecast spot.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-            }
-        },
-    )
-}
-
-@Composable
-private fun Section(title: String) {
-    Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp))
-}

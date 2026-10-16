@@ -23,6 +23,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.text.font.FontWeight
+import dev.windsaloft.data.ChartStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.SmallFloatingActionButton
@@ -85,6 +89,8 @@ fun WindsAloftApp(vm: MainViewModel) {
     val snackbar = remember { SnackbarHostState() }
     var showSettings by remember { mutableStateOf(false) }
     var showPlaces by remember { mutableStateOf(false) }
+    var showTwoDay by rememberSaveable { mutableStateOf(false) }
+    var layerMenu by remember { mutableStateOf(false) }
     // Collapsed by default so the arrow columns get most of the screen; tap the panel for the table.
     var profileExpanded by rememberSaveable { mutableStateOf(false) }
     // The hide button steps through: all panels -> forecast time only -> nothing. The arrows never resize.
@@ -217,11 +223,26 @@ fun WindsAloftApp(vm: MainViewModel) {
         SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.TIME_ONLY) }) {
             Icon(AppIcons.Fullscreen, contentDescription = "Hide panels (keep the time slider)")
         }
-        SmallFloatingActionButton(onClick = {
-            val next = MapLayer.entries[(s.layer.ordinal + 1) % MapLayer.entries.size]
-            vm.updateSettings(s.copy(layer = next))
-            vm.message("Map: ${next.label}")
-        }) { Icon(AppIcons.Layers, contentDescription = "Change map style") }
+        if (state.pin != null) SmallFloatingActionButton(onClick = { showTwoDay = true; vm.loadAllModels() }) {
+            Text("48h", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+        if (state.showingSeveral) SmallFloatingActionButton(onClick = vm::cycleChartStyle) {
+            Text(
+                when (s.chartStyle) { ChartStyle.FULL -> "Full"; ChartStyle.SLIM -> "Slim"; ChartStyle.ONE_LINE -> "1 line"; ChartStyle.CONSENSUS -> "Avg" },
+                style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+            )
+        }
+        Box {
+            SmallFloatingActionButton(onClick = { layerMenu = true }) { Icon(AppIcons.Layers, contentDescription = "Change map style") }
+            DropdownMenu(layerMenu, onDismissRequest = { layerMenu = false }) {
+                MapLayer.entries.forEach { l ->
+                    DropdownMenuItem(
+                        text = { Text(l.label + (l.region?.let { " ($it)" } ?: ""), fontWeight = if (l == s.layer) FontWeight.Bold else FontWeight.Normal) },
+                        onClick = { layerMenu = false; vm.updateSettings(s.copy(layer = l)) },
+                    )
+                }
+            }
+        }
         SmallFloatingActionButton(onClick = vm::refresh) {
             Icon(Icons.Default.Refresh, contentDescription = "Refresh forecast")
         }
@@ -263,6 +284,7 @@ fun WindsAloftApp(vm: MainViewModel) {
             onHourOffset = vm::setHourOffset,
             onAltRange = vm::setAltRange,
             modifier = Modifier.fillMaxWidth().coversMap(map, "controls"),
+            onModelTapped = vm::toggleIsolate,
         )
     }
     val timeOnly = @Composable { modifier: Modifier ->
@@ -306,6 +328,11 @@ fun WindsAloftApp(vm: MainViewModel) {
                 map.windOverlay.anchor = s.arrowAnchor
                 map.windOverlay.showDirection = s.showDirection
                 map.windOverlay.showSpeed = s.showSpeed
+                map.windOverlay.style = s.chartStyle
+                map.windOverlay.backdropAlpha = s.backdropPct / 100f
+                map.windOverlay.showShear = s.showShear
+                map.windOverlay.unitLabel = s.unit.label
+                map.windOverlay.onModelTapped = vm::toggleIsolate
                 map.windOverlay.glyph = s.glyph
                 map.windOverlay.altitudesFt = state.altitudesFt
                 map.windOverlay.speedLabel = { ms -> Format.speed(ms, s.unit) }
@@ -340,7 +367,7 @@ fun WindsAloftApp(vm: MainViewModel) {
                     }
                 }
                 val buttons = @Composable {
-                    Column(Modifier.fillMaxHeight().coversMap(map, "buttons"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(Modifier.fillMaxHeight().coversMap(map, "buttons"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         compass(Modifier)
                         Spacer(Modifier.weight(1f))
                         if (panelMode == PanelMode.FULL) fabs()
@@ -412,7 +439,14 @@ fun WindsAloftApp(vm: MainViewModel) {
             val winds = java.io.File(context.filesDir, "winds").listFiles()?.sumOf { it.length() } ?: 0L
             "Saved on this phone: map tiles %.0f MB (up to 1 GB), winds %.1f MB.".format(tiles / 1e6, winds / 1e6)
         }
-        SettingsDialog(settings = s, onChange = vm::updateSettings, onDismiss = { showSettings = false }, offlineInfo = offlineInfo)
+        SettingsScreen(
+            settings = s, onChange = vm::updateSettings, onDismiss = { showSettings = false },
+            previewColumns = columns, previewAltitudes = state.altitudesFt, offlineInfo = offlineInfo,
+            onUpdateSaved = { vm.updateSavedPlaces(force = true) },
+        )
+    }
+    if (showTwoDay && state.pin != null) {
+        TwoDayScreen(state = state, onDismiss = { showTwoDay = false }, onRetry = vm::loadAllModels)
     }
     if (showPlaces) {
         PlacesDialog(

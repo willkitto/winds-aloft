@@ -8,12 +8,14 @@ import android.view.MotionEvent
 import dev.windsaloft.data.ArrowAnchor
 import dev.windsaloft.data.ArrowColor
 import dev.windsaloft.data.ArrowLayout
+import dev.windsaloft.data.ChartStyle
 import dev.windsaloft.data.Glyph
 import dev.windsaloft.wind.CloudCover
 import dev.windsaloft.wind.CloudLayer
 import dev.windsaloft.wind.KT_PER_MS
 import dev.windsaloft.wind.LatLon
 import dev.windsaloft.wind.Wind
+import dev.windsaloft.wind.WindMath
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Overlay
@@ -26,7 +28,7 @@ import kotlin.math.sin
  * One forecast source's winds, one slot per selected altitude (low to high; null = no data), and the
  * cloud layers within the shown altitudes (null = the model has no cloud data).
  */
-data class WindColumn(val label: String?, val color: Int?, val winds: List<Wind?>, val clouds: List<CloudLayer>? = null)
+data class WindColumn(val label: String?, val color: Int?, val winds: List<Wind?>, val clouds: List<CloudLayer>? = null, val id: String? = null)
 
 /**
  * Draws the winds for the pinned location. Arrows point DOWNWIND (the way the air is moving).
@@ -73,6 +75,16 @@ class WindOverlay(private val density: Float) : Overlay() {
     var tempLabel: (Double) -> String = { c -> "${c.toInt()}C" }
     /** Show the direction the wind comes from ("270°") in front of each speed. */
     var showDirection: Boolean = false
+    /** How several models are drawn (a single model always uses the full column). */
+    var style: ChartStyle = ChartStyle.FULL
+    /** Opacity (0–0.9) of the dark panel behind the chart; 0 = none. */
+    var backdropAlpha: Float = 0f
+    /** Mark sharp turns and speed changes between neighbouring rows. */
+    var showShear: Boolean = false
+    /** The speed unit's name, for shear labels ("+12 kt"). */
+    var unitLabel: String = "kt"
+    /** Called when a model's name on the map is tapped (to show only that model, or all again). */
+    var onModelTapped: (String) -> Unit = {}
 
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -146,19 +158,144 @@ class WindOverlay(private val density: Float) : Overlay() {
         // chart's anchor. The symbols inside add it back, so each still points along its real direction.
         c.save()
         c.rotate(-rotation + chartTurn, x, y)
-        if (columns.isNotEmpty()) {
-            when (layout) {
-                ArrowLayout.STACKED -> drawColumns(c, x, y)
-                ArrowLayout.FAN -> drawFan(c, x, y)
-            }
-        }
+        drawChart(c, x, y)
         val handleOffset = drawHandle(c, x, y, detached)
         c.restore()
+        chartX = x; chartY = y
         // Touch events arrive in the same (rotated) canvas frame: place the handle's hit spot there.
         val o = Math.toRadians((chartTurn - rotation).toDouble())
         handleX = x - handleOffset * sin(o).toFloat()
         handleY = y + handleOffset * cos(o).toFloat()
         pinPx = pinX to pinY
+    }
+
+    /** Draws the chart with its base at ([x], [y]) in the chart's own (upright) frame. */
+    private fun drawChart(c: Canvas, x: Float, y: Float) {
+        hits.clear()
+        if (columns.isEmpty()) return
+        when {
+            layout == ArrowLayout.FAN -> drawFan(c, x, y)
+            columns.size == 1 || style == ChartStyle.FULL -> drawColumns(c, x, y)
+            style == ChartStyle.SLIM -> drawSlim(c, x, y)
+            style == ChartStyle.ONE_LINE -> drawOneLine(c, x, y, consensus = false)
+            else -> drawOneLine(c, x, y, consensus = true)
+        }
+    }
+
+    /**
+     * The chart alone, unrotated, on any canvas: the settings page uses this for its live preview.
+     * Map rotation and the sideways turn are left out.
+     */
+    fun drawPreview(c: Canvas, boxW: Float, boxH: Float) {
+        val r = rotation; val t = chartTurn
+        rotation = 0f; chartTurn = 0f
+        try {
+            // Draw once off-screen to learn the chart's size, then scale it to fit the box.
+            lastBounds.setEmpty()
+            val probe = android.graphics.Picture()
+            drawChart(probe.beginRecording(boxW.toInt().coerceAtLeast(1), boxH.toInt().coerceAtLeast(1)), 0f, 0f)
+            probe.endRecording()
+            val b = if (lastBounds.isEmpty) android.graphics.RectF(-90 * density, -90 * density, 90 * density, 90 * density) else android.graphics.RectF(lastBounds)
+            val pad = 10 * density
+            val scale = minOf(1f, (boxW - 2 * pad) / b.width(), (boxH - 2 * pad) / b.height())
+            c.save()
+            c.translate(boxW / 2 - b.centerX() * scale, boxH / 2 - b.centerY() * scale)
+            c.scale(scale, scale)
+            drawChart(c, 0f, 0f)
+            c.restore()
+        } finally { rotation = r; chartTurn = t }
+        hits.clear()
+    }
+
+    // ---------------------------------------------------------------- Tapping model names
+
+    /** Model-name areas in the chart's own frame, for taps. */
+    private val hits = mutableListOf<Pair<android.graphics.RectF, String>>()
+    private var chartX = Float.NaN
+    private var chartY = Float.NaN
+
+    private fun addHit(l: Float, t: Float, r: Float, b: Float, id: String?) {
+        if (id != null) hits += android.graphics.RectF(minOf(l, r), minOf(t, b), maxOf(l, r), maxOf(t, b)) to id
+    }
+
+    override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
+        if (hits.isEmpty() || chartX.isNaN()) return false
+        // Undo the chart's turn around its base to get the tap in the chart's own frame.
+        val a = Math.toRadians(-(chartTurn - rotation).toDouble())
+        val dx = e.x - chartX
+        val dy = e.y - chartY
+        val lx = chartX + (dx * cos(a) - dy * sin(a)).toFloat()
+        val ly = chartY + (dx * sin(a) + dy * cos(a)).toFloat()
+        val slop = 6 * density
+        val hit = hits.firstOrNull { (r, _) -> lx >= r.left - slop && lx <= r.right + slop && ly >= r.top - slop && ly <= r.bottom + slop } ?: return false
+        onModelTapped(hit.second)
+        return true
+    }
+
+    // ---------------------------------------------------------------- Background panel and shear
+
+    private val backdrop = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    /** The chart's extent from the last draw, in its own frame (used to fit the settings preview). */
+    private val lastBounds = android.graphics.RectF()
+
+    /** A dark translucent panel behind the chart, so it reads on a busy map (only when turned on). */
+    private fun drawBackdrop(c: Canvas, l: Float, t: Float, r: Float, b: Float) {
+        lastBounds.set(l, t, r, b)
+        if (backdropAlpha <= 0f) return
+        backdrop.color = 0xFF0E1621.toInt()
+        backdrop.alpha = (backdropAlpha.coerceIn(0f, 0.9f) * 255).toInt()
+        rect.set(l, t, r, b)
+        c.drawRoundRect(rect, 12 * density, 12 * density, backdrop)
+    }
+
+    /** A sharp change between two neighbouring rows, as a short label, or null. */
+    private fun shear(a: Wind, b: Wind): String? {
+        val ka = a.speedMs * KT_PER_MS
+        val kb = b.speedMs * KT_PER_MS
+        val turn = Math.abs(((b.dirFromDeg - a.dirFromDeg) % 360 + 540) % 360 - 180)
+        if (turn >= SHEAR_TURN_DEG && ka >= SHEAR_MIN_KT && kb >= SHEAR_MIN_KT) return "turns ${Math.round(turn)}°"
+        val d = (b.speedMs - a.speedMs)
+        if (Math.abs(d * KT_PER_MS) >= SHEAR_SPEED_KT) return (if (d > 0) "+" else "−") + speedLabel(Math.abs(d)) + " " + unitLabel
+        return null
+    }
+
+    private val shearPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val shearFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xF2FFFFFF.toInt() }
+    private val shearText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF5A1043.toInt(); isFakeBoldText = true; textAlign = Paint.Align.LEFT }
+
+    /** A small zigzag on a column line between two rows. */
+    private fun drawZigzag(c: Canvas, cx: Float, cy: Float) {
+        val w = 5 * density
+        val h = 3.2f * density
+        path.reset()
+        path.moveTo(cx - w, cy + h); path.lineTo(cx - w / 2, cy - h); path.lineTo(cx, cy + h); path.lineTo(cx + w / 2, cy - h); path.lineTo(cx + w, cy + h)
+        shearPaint.color = 0xFFFFFFFF.toInt(); shearPaint.strokeWidth = 4.5f * density
+        c.drawPath(path, shearPaint)
+        shearPaint.color = 0xFFB0207A.toInt(); shearPaint.strokeWidth = 2f * density
+        c.drawPath(path, shearPaint)
+    }
+
+    /** A labelled shear badge, its right edge at [right], kept level on screen when the chart is sideways. */
+    private fun drawShearBadge(c: Canvas, right: Float, cy: Float, label: String, size: Float) {
+        shearText.textSize = size
+        val w = shearText.measureText(label) + 22 * density
+        val h = size + 8 * density
+        val cx = right - w / 2
+        val upright = Math.floorMod(Math.round(chartTurn), 180) == 90
+        if (upright) { c.save(); c.rotate(-chartTurn, cx, cy) }
+        rect.set(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+        c.drawRoundRect(rect, h / 2, h / 2, shearFill)
+        shearPaint.color = 0xFFB0207A.toInt(); shearPaint.strokeWidth = 1.4f * density
+        c.drawRoundRect(rect, h / 2, h / 2, shearPaint)
+        val zx = rect.left + 9 * density
+        path.reset()
+        path.moveTo(zx - 4 * density, cy + 2.5f * density); path.lineTo(zx - 2 * density, cy - 2.5f * density)
+        path.lineTo(zx, cy + 2.5f * density); path.lineTo(zx + 2 * density, cy - 2.5f * density); path.lineTo(zx + 4 * density, cy + 2.5f * density)
+        shearPaint.strokeWidth = 1.6f * density
+        c.drawPath(path, shearPaint)
+        c.drawText(label, rect.left + 16 * density, cy - (shearText.ascent() + shearText.descent()) / 2, shearText)
+        if (upright) c.restore()
     }
 
     // ---------------------------------------------------------------- Dragging the chart
@@ -295,6 +432,12 @@ class WindOverlay(private val density: Float) : Overlay() {
         fun colL(j: Int) = cxOf(j) - reach
         fun colR(j: Int) = cxOf(j) + reach + labelW
         val blockRight = colR(columns.lastIndex)
+        run {
+            val cloudLabels = if (!comparing && showClouds && columns.first().clouds?.isNotEmpty() == true) width("7.4k–9.6k", textSize * 0.8f) + 14 * density else 6 * density
+            val shearRoom = if (showShear && !comparing) width("turns 120°", textSize * 0.78f) + 30 * density else 0f
+            val head = if (comparing || columns.first().label != null) (if (upright) columns.maxOf { col -> col.label?.let { width(it, textSize) } ?: 0f } else textSize) + 14 * density else 8 * density
+            drawBackdrop(c, colL(0) - altW - shearRoom, top - head, blockRight + cloudLabels, y + 8 * density)
+        }
 
         // Clouds: bands for layers within the shown altitudes, markers for layers above or below them.
         val above = mutableListOf<Pair<Int, CloudLayer>>()
@@ -386,6 +529,19 @@ class WindOverlay(private val density: Float) : Overlay() {
             } else if (col.label != null) {
                 text.textSize = textSize; textHalo.textSize = textSize
                 drawText(c, col.label, cx + labelW / 2, top - 6 * density, Paint.Align.CENTER, col.color ?: 0xFFFFFFFF.toInt())
+            }
+            if (col.label != null) addHit(colL(j), top - 6 * density - textSize * 1.2f, colR(j), top, col.id)
+        }
+
+        // Shear: a labelled badge left of the altitudes for one model, a zigzag on each column when comparing.
+        if (showShear) columns.forEachIndexed { j, col ->
+            for (i in skip until rows - 1) {
+                val a = col.winds.getOrNull(i) ?: continue
+                val b = col.winds.getOrNull(i + 1) ?: continue
+                val label = shear(a, b) ?: continue
+                val my = (rowY(i) + rowY(i + 1)) / 2
+                if (comparing) drawZigzag(c, cxOf(j), my)
+                else drawShearBadge(c, colL(0) - altW - 2 * density, my, label, textSize * 0.78f)
             }
         }
 
@@ -562,9 +718,174 @@ class WindOverlay(private val density: Float) : Overlay() {
         else -> 0xFFFFFFFF.toInt()
     }
 
+    // ---------------------------------------------------------------- Compact styles for several models
+
+    /** Text in the chart's frame, kept level on screen when the chart is sideways. */
+    private fun label(c: Canvas, s: String, tx: Float, ty: Float, align: Paint.Align, color: Int, size: Float, upright: Boolean) {
+        text.textSize = size; textHalo.textSize = size
+        if (!upright) { drawText(c, s, tx, ty + size * 0.36f, align, color); return }
+        val h = size * 1.2f
+        val cx = when (align) { Paint.Align.LEFT -> tx + h / 2; Paint.Align.RIGHT -> tx - h / 2; else -> tx }
+        drawUpright(c, cx, ty, listOf(Triple(s, size, color)))
+    }
+
+    /** Rows shared by every column: the first and last with data in any column, and their altitude labels. */
+    private fun rowSpan(): Pair<Int, Int>? {
+        val rows = columns.maxOf { it.winds.size }
+        val first = (0 until rows).firstOrNull { i -> columns.any { it.winds.getOrNull(i) != null } } ?: return null
+        return first to rows
+    }
+
+    private fun rowLabel(i: Int): String {
+        if (columns.any { it.winds.getOrNull(i)?.surface == true }) return "SFC"
+        val alt = altitudesFt.getOrNull(i) ?: columns.firstNotNullOfOrNull { it.winds.getOrNull(i) }?.altitudeFt ?: return ""
+        return if (alt == 0) "SFC" else if (alt % 1000 == 0) "${alt / 1000}k" else "$alt"
+    }
+
+    /** Narrow columns: a short centred arrow and the speed, model names on top. Six models fit a phone. */
+    private fun drawSlim(c: Canvas, x: Float, y: Float) {
+        val (skip, rows) = rowSpan() ?: return
+        val unit = ROW_DP * density
+        val upright = Math.floorMod(Math.round(chartTurn), 180) == 90
+        val size = (unit * 0.3f).coerceIn(10f * density, 13f * density)
+        fun width(s: String): Float { text.textSize = size; return text.measureText(s) }
+        val cell = if (upright) maxOf(unit * 0.8f, width("888") + 10 * density) else unit * 0.8f
+        val colW = maxOf(36 * density, if (upright) size * 1.2f + 28 * density else width("88") + 26 * density)
+        val altW = 30 * density
+        val n = columns.size
+        val blockW = altW + colW * n
+        val x0 = x - blockW / 2 + altW
+        fun rowY(i: Int) = y - cell * (i - skip + 0.5f)
+        val top = y - cell * (rows - skip)
+        val headH = if (upright) columns.maxOf { col -> col.label?.let { width(it) } ?: 0f } + 12 * density else size + 14 * density
+        drawBackdrop(c, x0 - altW, top - headH, x0 + colW * n, y + 6 * density)
+        staffHalo.strokeWidth = 4f * density; staff.strokeWidth = 2f * density; staff.color = 0xEEFFFFFF.toInt()
+        c.drawLine(x0 + colW * 0.35f, y, x0 + colW * (n - 1 + 0.35f), y, staffHalo)
+        c.drawLine(x0 + colW * 0.35f, y, x0 + colW * (n - 1 + 0.35f), y, staff)
+        val stroke = 2.2f * density
+        columns.forEachIndexed { j, col ->
+            val lx = x0 + colW * j + colW * 0.35f
+            staffHalo.strokeWidth = 3.5f * density; staff.strokeWidth = 1.3f * density; staff.color = col.color ?: 0xEEFFFFFF.toInt()
+            c.drawLine(lx, y, lx, top, staffHalo)
+            c.drawLine(lx, y, lx, top, staff)
+            col.winds.forEachIndexed { i, w ->
+                if (w == null || i < skip) return@forEachIndexed
+                val kt = w.speedMs * KT_PER_MS
+                val len = (9f + 9f * (kt / 40.0).toFloat().coerceIn(0f, 1f)) * density
+                drawGlyph(c, lx, rowY(i), w, len, unit * 0.12f, stroke, colorFor(w, col), ArrowAnchor.CENTRE, scaleBySpeed = false)
+                label(c, speedLabel(w.speedMs), lx + 11 * density, rowY(i), Paint.Align.LEFT, 0xFFFFFFFF.toInt(), size, upright)
+            }
+            col.label?.let { name ->
+                val cx = x0 + colW * (j + 0.5f)
+                if (upright) drawUpright(c, cx, top - 6 * density - width(name) / 2, listOf(Triple(name, size, 0xFFFFFFFF.toInt())))
+                else {
+                    text.textSize = size; textHalo.textSize = size
+                    drawText(c, name, cx, top - 10 * density, Paint.Align.CENTER, 0xFFFFFFFF.toInt())
+                }
+                // A colour bar under the name: the name stays white, the bar carries the model's colour.
+                headFill.color = col.color ?: 0xFFFFFFFF.toInt()
+                rect.set(x0 + colW * j + 4 * density, top - 5 * density, x0 + colW * (j + 1) - 4 * density, top - 2 * density)
+                c.drawRect(rect, headFill)
+                addHit(x0 + colW * j, top - headH, x0 + colW * (j + 1), top, col.id)
+            }
+            if (showShear) for (i in skip until rows - 1) {
+                val a = col.winds.getOrNull(i) ?: continue
+                val b = col.winds.getOrNull(i + 1) ?: continue
+                if (shear(a, b) != null) drawZigzag(c, lx, (rowY(i) + rowY(i + 1)) / 2)
+            }
+        }
+        for (i in skip until rows) label(c, rowLabel(i), x0 - 6 * density, rowY(i), Paint.Align.RIGHT, 0xFFFFFFFF.toInt(), size, upright)
+    }
+
+    /**
+     * One line for all models. [consensus] false: every model's arrow from the same point per altitude,
+     * plus the speed range and a "Δ" badge where models differ by 10 kt or more. True: one average arrow
+     * with a wedge spanning the models' directions, and "average ± spread".
+     */
+    private fun drawOneLine(c: Canvas, x: Float, y: Float, consensus: Boolean) {
+        val (skip, rows) = rowSpan() ?: return
+        val unit = ROW_DP * density
+        val upright = Math.floorMod(Math.round(chartTurn), 180) == 90
+        val size = (unit * 0.3f).coerceIn(10f * density, 13f * density)
+        fun width(s: String): Float { text.textSize = size; return text.measureText(s) }
+        val cell = if (upright) maxOf(unit * 0.8f, width("88–88") + 10 * density) else unit * 0.8f
+        fun rowY(i: Int) = y - cell * (i - skip + 0.5f)
+        val top = y - cell * (rows - skip)
+        val reach = 30 * density
+        // Legend: model names in rows of three, each with its colour bar; tap one to show only that model.
+        val perRow = 3
+        val legW = 62 * density
+        val legRows = (columns.size + perRow - 1) / perRow
+        val legH = legRows * (size + 10 * density) + 6 * density
+        val numX = x + reach + 8 * density
+        val right = numX + width("88–88") + (if (consensus) 10 * density else width(" !Δ88") + 18 * density)
+        val left = minOf(x - reach - width("14k") - 12 * density, x - legW * perRow / 2)
+        drawBackdrop(c, left, top - legH - (if (consensus) size + 8 * density else 0f), maxOf(right, x + legW * perRow / 2), y + 6 * density)
+        val legTop = top - legH
+        columns.forEachIndexed { k, col ->
+            val lx = x - legW * perRow / 2 + legW * (k % perRow)
+            val ly = legTop + (k / perRow) * (size + 10 * density) + size / 2 + 2 * density
+            headFill.color = col.color ?: 0xFFFFFFFF.toInt()
+            rect.set(lx + 2 * density, ly - 3 * density, lx + 12 * density, ly + 3 * density)
+            c.drawRect(rect, headFill)
+            label(c, col.label ?: "", lx + 16 * density, ly, Paint.Align.LEFT, 0xFFFFFFFF.toInt(), size * 0.95f, false)
+            addHit(lx, ly - size, lx + legW, ly + size * 0.8f, col.id)
+        }
+        if (consensus) label(c, "Average of ${columns.size} · wedge = spread", x, legTop - size * 0.7f, Paint.Align.CENTER, 0xFFE6EEF5.toInt(), size * 0.9f, false)
+        staffHalo.strokeWidth = 4f * density; staff.strokeWidth = 1.6f * density; staff.color = 0xEEFFFFFF.toInt()
+        c.drawLine(x, y, x, top, staffHalo)
+        c.drawLine(x, y, x, top, staff)
+        for (i in skip until rows) {
+            val cy = rowY(i)
+            label(c, rowLabel(i), x - reach - 6 * density, cy, Paint.Align.RIGHT, 0xFFFFFFFF.toInt(), size, upright)
+            val ws = columns.mapNotNull { col -> col.winds.getOrNull(i)?.let { col to it } }
+            if (ws.isEmpty()) continue
+            val speeds = ws.map { it.second.speedMs }
+            if (!consensus) {
+                ws.sortedByDescending { it.second.speedMs }.forEach { (col, w) ->
+                    val kt = w.speedMs * KT_PER_MS
+                    drawGlyph(c, x, cy, w, (8f + 22f * (kt / 40.0).toFloat().coerceIn(0f, 1f)) * density, unit * 0.1f, 1.9f * density, colorFor(w, col), ArrowAnchor.TAIL, scaleBySpeed = false)
+                }
+                label(c, "${speedLabel(speeds.min())}–${speedLabel(speeds.max())}", numX, cy, Paint.Align.LEFT, 0xFFFFFFFF.toInt(), size, upright)
+                val spread = WindMath.maxVectorDifference(ws.map { it.second }) ?: 0.0
+                if (spread * KT_PER_MS >= 10 && !upright) {
+                    val bx = numX + width("88–88") + 10 * density
+                    path.reset(); path.moveTo(bx, cy - 6 * density); path.lineTo(bx + 6.5f * density, cy + 5 * density); path.lineTo(bx - 6.5f * density, cy + 5 * density); path.close()
+                    headFill.color = 0xFFFAB219.toInt(); c.drawPath(path, headFill)
+                    markerText.textSize = size * 0.75f; c.drawText("!", bx, cy + 3.5f * density, markerText)
+                    label(c, "Δ" + speedLabel(spread), bx + 9 * density, cy, Paint.Align.LEFT, 0xFFFFFFFF.toInt(), size * 0.92f, false)
+                }
+            } else {
+                var su = 0.0; var sv = 0.0
+                ws.forEach { (_, w) -> val (u, v) = WindMath.toUv(w.speedMs, w.dirFromDeg); su += u; sv += v }
+                val mean = WindMath.fromUv(su / ws.size, sv / ws.size)
+                val meanSp = speeds.average()
+                val kt = meanSp * KT_PER_MS
+                val len = (10f + 20f * (kt / 40.0).toFloat().coerceIn(0f, 1f)) * density
+                val toward = mean.second + 180.0
+                // Each model's downwind bearing relative to the average, ignoring near-calm winds.
+                val devs = ws.filter { it.second.speedMs * KT_PER_MS >= 3 }.map { (_, w) -> ((w.dirFromDeg + 180.0 - toward) % 360 + 540) % 360 - 180 }
+                if (devs.size > 1) {
+                    val lo = devs.min(); val hi = devs.max()
+                    val r = len + 6 * density
+                    val a0 = (toward + lo + rotation - chartTurn - 90).toFloat()
+                    rect.set(x - r, cy - r, x + r, cy + r)
+                    backdrop.color = 0x6BFFFFFF; c.drawArc(rect, a0, (hi - lo).toFloat(), true, backdrop)
+                    shearPaint.color = 0x8C142030.toInt(); shearPaint.strokeWidth = 1f * density; c.drawArc(rect, a0, (hi - lo).toFloat(), true, shearPaint)
+                    if (hi - lo >= 90 && !upright) label(c, "split ${Math.round(hi - lo)}°", numX + width("88 ±88") + 8 * density, cy, Paint.Align.LEFT, 0xFFFFE9A8.toInt(), size * 0.88f, false)
+                }
+                val avg = Wind(0, mean.second, meanSp, null)
+                drawGlyph(c, x, cy, avg, len, unit * 0.1f, 2.4f * density, 0xFFFFFFFF.toInt(), ArrowAnchor.TAIL, scaleBySpeed = false)
+                val sd = Math.sqrt(speeds.sumOf { (it - meanSp) * (it - meanSp) } / speeds.size)
+                label(c, "${speedLabel(meanSp)} ±${speedLabel(sd)}", numX, cy, Paint.Align.LEFT, 0xFFFFFFFF.toInt(), size, upright)
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- Fan
 
     private fun drawFan(c: Canvas, x: Float, y: Float) {
+        drawBackdrop(c, x - 120 * density, y - 120 * density, x + 120 * density, y + 120 * density)
         val stroke = 3f * density
         // First (primary) source last so it ends up on top.
         for (col in columns.asReversed()) for (w in col.winds.filterNotNull().sortedByDescending { it.altitudeFt }) {
@@ -650,6 +971,12 @@ class WindOverlay(private val density: Float) : Overlay() {
 
         /** Cloud band opacity by coverage. */
         private val CLOUD_ALPHA = mapOf(CloudCover.SCT to 0.32f, CloudCover.BKN to 0.5f, CloudCover.OVC to 0.66f)
+
+        /** Shear: a turn of at least this much between neighbouring rows (both winds at least SHEAR_MIN_KT)… */
+        const val SHEAR_TURN_DEG = 60.0
+        const val SHEAR_MIN_KT = 5.0
+        /** …or a speed change of at least this many knots per row. */
+        const val SHEAR_SPEED_KT = 10.0
 
         /** Row spacing of the stacked columns, in dp. */
         const val ROW_DP = 38f

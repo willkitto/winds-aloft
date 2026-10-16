@@ -80,8 +80,16 @@ object WindColors {
 }
 
 /** Distinct colours for compared models, by selection order. Bright enough to read on maps with a dark halo. */
+/**
+ * One colour per compared model, in selection order. The first seven are ordered so neighbouring
+ * columns stay distinct for colour-blind viewers (checked with a CVD simulation); every column is also
+ * labelled by name, so colour is never the only cue. The rest only appear with eight or more models.
+ */
 object ModelColors {
-    private val COLORS = intArrayOf(0xFF22C3FF.toInt(), 0xFFFF4FA3.toInt(), 0xFFFFC21A.toInt())
+    private val COLORS = intArrayOf(
+        0xFF22C3FF.toInt(), 0xFFFF7A2F.toInt(), 0xFF9B7BFF.toInt(), 0xFFFFC21A.toInt(), 0xFFFF4FA3.toInt(), 0xFF6BE05A.toInt(),
+        0xFFF0F0F0.toInt(), 0xFF3ED6C0.toInt(), 0xFFFF4A4A.toInt(), 0xFFC9A86A.toInt(), 0xFF5A86FF.toInt(),
+    )
 
     fun argb(slot: Int): Int = COLORS[slot.mod(COLORS.size)]
 }

@@ -15,6 +15,9 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.test.core.app.ActivityScenario
@@ -60,13 +63,19 @@ class ScreenshotTest {
 
     private val outDir = File(System.getProperty("screenshot.dir") ?: "build/screenshots").apply { mkdirs() }
 
-    /** Veering, strengthening winds with height — a typical post-frontal profile. */
-    private fun syntheticPoint(at: LatLon, elevation: Double, now: Long, skew: Double): ForecastPoint {
+    /**
+     * Veering, strengthening winds with height — a typical post-frontal profile. With [shearAt], the wind
+     * swings round by 100° and jumps in speed above that sample, to show shear markers.
+     */
+    private fun syntheticPoint(at: LatLon, elevation: Double, now: Long, skew: Double, shearAt: Int? = null): ForecastPoint {
         val hours = (0..48).map { now + it * 3600L }
         val profiles = hours.mapIndexed { h, _ ->
             (0..12).map { i ->
                 val height = elevation + 10 + i * 700.0
-                RawSample(height, 3.0 + i * 1.8 + skew, (205.0 + i * 7 + skew * 4 + h) % 360, 18.0 - i * 4.5)
+                val sheared = shearAt != null && i >= shearAt
+                // Speed and direction change through the day so the two-day page has highs and lows.
+                val daily = 3.0 * Math.sin(h / 7.0 + i * 0.3)
+                RawSample(height, 3.0 + i * 1.8 + skew + daily + (if (sheared) 9.0 else 0.0), (205.0 + i * 7 + skew * 4 + h * 2 + (if (sheared) 150.0 else 0.0)) % 360, 18.0 - i * 4.5)
             }
         }
         // A broken layer around 7,500–9,500 ft MSL and a scattered one near 12,500 ft.
@@ -109,17 +118,67 @@ class ScreenshotTest {
         chartOffset = LatLon(0.06, -0.16), pending = LatLon(40.02, -104.95),
     )
 
+    private val sixModels = listOf("ncep_gfs_seamless", "ecmwf_ifs025", "icon_seamless", "gem_seamless", "ukmo_seamless", "meteofrance_seamless")
+
+    @Test
+    fun renderSixSlim() = render("six_slim", Settings(modelIds = sixModels, chartStyle = dev.windsaloft.data.ChartStyle.SLIM), expanded = false)
+
+    @Test
+    fun renderSixOneLine() = render("six_oneline", Settings(modelIds = sixModels, chartStyle = dev.windsaloft.data.ChartStyle.ONE_LINE), expanded = false)
+
+    @Test
+    fun renderSixConsensus() = render("six_consensus", Settings(modelIds = sixModels, chartStyle = dev.windsaloft.data.ChartStyle.CONSENSUS, backdropPct = 40), expanded = false)
+
+    @Test
+    fun renderShearBackdrop() = render("shear_backdrop", Settings(showShear = true, backdropPct = 50, layer = dev.windsaloft.data.MapLayer.SATELLITE), expanded = false, shearAt = 3)
+
+    /** The two-day page, winds and then all models' clouds. */
+    @Test
+    fun renderTwoDay() {
+        val now = currentHourEpoch()
+        val pin = LatLon(40.10, -105.20)
+        val settings = Settings(modelIds = sixModels.take(3))
+        val all = sixModels.mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6) }.toMap()
+        val state = UiState(
+            settings = settings, pin = pin, pinLabel = "Boulder, Colorado", pinForecasts = all.filterKeys { it in settings.modelIds },
+            moreForecasts = all.filterKeys { it !in settings.modelIds }, nowHourEpoch = now, hourOffset = 10,
+            unavailableModels = setOf("ncep_hrrr_conus"),
+        )
+        compose.setContent { WindsAloftTheme { TwoDayScreen(state, {}, {}) } }
+        compose.waitForIdle()
+        save("twoday_winds")
+        compose.onNodeWithText("Clouds, all models").performClick()
+        compose.waitForIdle()
+        save("twoday_clouds")
+    }
+
+    @Test
+    fun renderSettings() {
+        val now = currentHourEpoch()
+        val pin = LatLon(40.10, -105.20)
+        val settings = Settings(modelIds = sixModels.take(3), backdropPct = 40, showShear = true)
+        val state = UiState(settings = settings, pin = pin, pinForecasts = settings.modelIds.mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6) }.toMap(), nowHourEpoch = now, hourOffset = 3, altRangeK = 0..14)
+        val columns = buildColumns(state, buildProfiles(state))
+        compose.setContent { WindsAloftTheme { SettingsScreen(settings, {}, {}, columns, state.altitudesFt, "Saved on this phone: map tiles 212 MB, winds 1.4 MB.", {}) } }
+        compose.waitForIdle()
+        save("settings_top")
+        compose.onNodeWithText("Highest altitude").performScrollTo()
+        compose.waitForIdle()
+        save("settings_models")
+    }
+
     @Test
     fun renderRotatedMap() = render("rotated", Settings(), expanded = false, rotation = 40f)
 
     private fun render(
         name: String, settings: Settings, expanded: Boolean, chartOffset: LatLon? = null, pending: LatLon? = null, rotation: Float = 0f,
+        shearAt: Int? = null,
     ) {
         Configuration.getInstance().userAgentValue = "dev.windsaloft.test"
         val now = currentHourEpoch()
         val pin = LatLon(40.10, -105.20)
         // Each model gets a slightly different profile so the comparison shows some spread.
-        val pinForecasts = settings.modelIds.mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6) }.toMap()
+        val pinForecasts = settings.modelIds.mapIndexed { i, m -> m to syntheticPoint(pin, 1580.0, now, i * 1.6, shearAt) }.toMap()
         val state = UiState(
             settings = settings, pin = pin, pinLabel = "Boulder, Colorado", pinForecasts = pinForecasts,
             pinFetchedAtMs = System.currentTimeMillis() - 4 * 60_000, nowHourEpoch = now,
@@ -153,6 +212,10 @@ class ScreenshotTest {
                         map.windOverlay.anchor = settings.arrowAnchor
                         map.windOverlay.showDirection = settings.showDirection
                         map.windOverlay.showSpeed = settings.showSpeed
+                        map.windOverlay.style = settings.chartStyle
+                        map.windOverlay.backdropAlpha = settings.backdropPct / 100f
+                        map.windOverlay.showShear = settings.showShear
+                        map.windOverlay.unitLabel = settings.unit.label
                         map.metarOverlay.stations = state.metars
                         map.metarOverlay.speedLabel = { ms -> Format.speed(ms, settings.unit) }
                         map.mapView

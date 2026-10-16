@@ -12,7 +12,25 @@ enum class SpeedUnit(val label: String, val perMs: Double) {
     MS("m/s", 1.0),
 }
 
-enum class MapLayer(val label: String) { TOPO("Topo"), STREETS("Streets"), SATELLITE("Satellite") }
+/** Map backgrounds. [region] marks sources that only cover part of the world. */
+enum class MapLayer(val label: String, val region: String? = null) {
+    TOPO("Topo (OpenTopoMap)"),
+    STREETS("Streets (OpenStreetMap)"),
+    OUTDOORS("Outdoors (CyclOSM)"),
+    ESRI_TOPO("Topo (Esri)"),
+    SATELLITE("Satellite"),
+    HYBRID("Satellite with labels"),
+    FAA_VFR("FAA VFR sectional", "US"),
+    USGS_TOPO("USGS topo", "US"),
+    USGS_IMAGERY("USGS imagery with topo", "US"),
+}
+
+/**
+ * How the chart shows several models. FULL: a column per model with long arrows, numbers and clouds.
+ * SLIM: narrow columns, short arrows and speed only. ONE_LINE: every model's arrow from one point per
+ * altitude. CONSENSUS: one average arrow per altitude with a wedge showing the spread in direction.
+ */
+enum class ChartStyle(val label: String) { FULL("Full"), SLIM("Slim columns"), ONE_LINE("All on one line"), CONSENSUS("Consensus") }
 
 /** STACKED: a vertical column per forecast source, one row per altitude (low at the bottom). FAN: all arrows share one origin. */
 enum class ArrowLayout(val label: String) { STACKED("Stacked"), FAN("Fan") }
@@ -50,14 +68,17 @@ enum class ChartOrientation(val label: String) {
 enum class TempUnit(val label: String) {
     C("Celsius (C)"), F("Fahrenheit (F)");
 
-    /** "-3C" / "27F": the unit letter, not "°", which is kept for compass directions. */
-    fun format(c: Double): String = "${(if (this == F) c * 9 / 5 + 32 else c).let { Math.round(it) }}$name"
+    /**
+     * "-3 c" / "27 f": a space and a small unit letter (a capital C next to digits reads like a 0), and
+     * no "°", which is kept for compass directions.
+     */
+    fun format(c: Double): String = "${(if (this == F) c * 9 / 5 + 32 else c).let { Math.round(it) }} ${name.lowercase()}"
 }
 
 data class Settings(
     val unit: SpeedUnit = SpeedUnit.KT,
     val altitudeRef: AltitudeRef = AltitudeRef.MSL,
-    /** 1–3 forecast models, compared side by side at the pinned location. */
+    /** Forecast models (one or more), compared side by side at the pinned location. */
     val modelIds: List<String> = listOf(OpenMeteo.MODELS.first().id),
     val ceilingFt: Int = 18_000,
     val layer: MapLayer = MapLayer.TOPO,
@@ -74,12 +95,17 @@ data class Settings(
     val chartOrientation: ChartOrientation = ChartOrientation.LONGEST,
     /** Show the latest reports (METARs) from airports near the forecast spot. */
     val showMetars: Boolean = true,
+    /** How several models are drawn on the map. */
+    val chartStyle: ChartStyle = ChartStyle.FULL,
+    /** Opacity (0–90 %) of a dark panel behind the chart, so it reads well on a busy map. */
+    val backdropPct: Int = 0,
+    /** Mark layers where the wind turns or changes speed sharply between neighbouring altitudes. */
+    val showShear: Boolean = false,
 ) {
     val primaryModelId: String get() = modelIds.first()
     val comparing: Boolean get() = modelIds.size > 1
 
     companion object {
-        const val MAX_MODELS = 3
         val CEILINGS = listOf(14_000, 18_000, 24_000, 30_000)
     }
 }
@@ -97,7 +123,7 @@ class Prefs(context: Context) {
             unit = enumOr(sp.getString("unit", null), d.unit),
             altitudeRef = enumOr(sp.getString("altRef", null), d.altitudeRef),
             modelIds = (sp.getString("models", null) ?: sp.getString("model", null)).orEmpty()
-                .split(",").filter { id -> OpenMeteo.MODELS.any { it.id == id } }.distinct().take(Settings.MAX_MODELS)
+                .split(",").filter { id -> OpenMeteo.MODELS.any { it.id == id } }.distinct()
                 .ifEmpty { d.modelIds },
             ceilingFt = sp.getInt("ceiling", d.ceilingFt),
             layer = enumOr(sp.getString("layer", null), d.layer),
@@ -112,6 +138,9 @@ class Prefs(context: Context) {
             glyph = enumOr(sp.getString("glyph", null), d.glyph),
             chartOrientation = enumOr(sp.getString("chartOrientation", null), d.chartOrientation),
             showMetars = sp.getBoolean("showMetars", d.showMetars),
+            chartStyle = enumOr(sp.getString("chartStyle", null), d.chartStyle),
+            backdropPct = sp.getInt("backdropPct", d.backdropPct).coerceIn(0, 90),
+            showShear = sp.getBoolean("showShear", d.showShear),
         )
     }
 
@@ -132,6 +161,9 @@ class Prefs(context: Context) {
         .putString("glyph", s.glyph.name)
         .putString("chartOrientation", s.chartOrientation.name)
         .putBoolean("showMetars", s.showMetars)
+        .putString("chartStyle", s.chartStyle.name)
+        .putInt("backdropPct", s.backdropPct)
+        .putBoolean("showShear", s.showShear)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {
