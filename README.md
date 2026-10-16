@@ -86,7 +86,7 @@ The forecast, altitude band and app-panel controls apply to every frame at once.
 
 - **Live mode:** open it from GitHub Pages or a local web server (`cd playground && python3 -m http.server`). It pulls live Open-Meteo forecasts and map tiles for any location you search or tap.
 - **Snapshot mode:** when it can't reach the network, as in a claude.ai artifact, it uses `playground/snapshot.js`, a captured forecast with bundled map tiles for a few sample locations. To refresh it, run `python3 playground/tools/make_snapshot.py`. Add `--merge` to only fill in what's missing.
-- **GitHub Pages:** `.github/workflows/pages.yml` publishes the playground on every push to `main` that touches `playground/`. Turn it on once under *Settings → Pages → Source: GitHub Actions*. The playground is then at `https://<user>.github.io/winds-aloft/`.
+- **GitHub Pages:** `.github/workflows/pages.yml` publishes the site on every push to `main` that touches `webapp/` or `playground/`. Turn it on once under *Settings → Pages → Source: GitHub Actions*. The web app (for iPhone) is then at `https://<user>.github.io/winds-aloft/` and the playground at `https://<user>.github.io/winds-aloft/playground/`.
 
 ## Testing without a phone (and side by side)
 

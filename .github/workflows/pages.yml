@@ -1,10 +1,11 @@
-# Publishes the design playground (playground/) to GitHub Pages, where it uses live forecasts.
-name: Playground
+# Publishes the iPhone/web app (webapp/) to GitHub Pages at the site root, and the design
+# playground (playground/) under /playground/.
+name: Web app
 
 on:
   push:
     branches: [main]
-    paths: ["playground/**", ".github/workflows/pages.yml"]
+    paths: ["webapp/**", "playground/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -25,8 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          if [ -d webapp ]; then cp -r webapp/. site/; fi
+          mkdir -p site/playground
+          cp -r playground/. site/playground/
+          rm -rf site/playground/tools
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: playground
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4
