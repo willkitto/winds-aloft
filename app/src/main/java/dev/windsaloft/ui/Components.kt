@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -119,6 +120,7 @@ fun SearchBar(
     onPick: (Place) -> Unit,
     onClearResults: () -> Unit,
     onSettings: () -> Unit,
+    onPlaces: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var query by remember { mutableStateOf("") }
@@ -147,6 +149,7 @@ fun SearchBar(
                         Icon(Icons.Default.Clear, contentDescription = "Clear search")
                     }
                 }
+                IconButton(onClick = onPlaces) { Icon(AppIcons.Bookmarks, contentDescription = "Saved and recent places") }
                 IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
             }
         }
@@ -393,10 +396,12 @@ fun PinPanel(
     onClose: () -> Unit,
     /** Shown when the chart has been dragged away from the forecast spot. */
     onReattach: (() -> Unit)? = null,
+    onToggleFavorite: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val s = state.settings
     val pin = state.pin ?: return
+    val favorite = state.pinFavorite != null
     val elevation = state.pinForecasts.values.firstOrNull()?.elevationM
     Card(modifier, shape = PanelShape, colors = panelColors(), elevation = CardDefaults.cardElevation(6.dp)) {
         Row(
@@ -414,6 +419,7 @@ fun PinPanel(
                     if (elevation != null) add("Elev ${Format.elevation(elevation)}")
                     add(if (s.comparing) "${s.modelIds.size} models" else OpenMeteo.label(s.primaryModelId))
                     if (state.pinFetchedAtMs > 0) add(Format.age(state.pinFetchedAtMs))
+                    if (!state.online) add("Offline")
                 }.joinToString(" · ")
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 if (s.showClouds && profiles.isNotEmpty()) {
@@ -436,6 +442,13 @@ fun PinPanel(
                 contentDescription = if (expanded) "Hide profile" else "Show profile",
                 modifier = Modifier.padding(start = 8.dp),
             )
+            IconButton(onClick = onToggleFavorite) {
+                Icon(
+                    if (favorite) Icons.Default.Star else AppIcons.StarOutline,
+                    contentDescription = if (favorite) "Remove from saved places" else "Save this place",
+                    tint = if (favorite) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Remove pin") }
         }
         if (onReattach != null) {
@@ -620,7 +633,7 @@ fun WindGlyph(dirFromDeg: Double, color: Color, size: Dp = 18.dp) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: () -> Unit) {
+fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: () -> Unit, offlineInfo: String = "") {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
@@ -653,6 +666,17 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                         FilterChip(settings.layer == l, { onChange(settings.copy(layer = l)) }, label = { Text(l.label) })
                     }
                 }
+                Section("Chart direction")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    dev.windsaloft.data.ChartOrientation.entries.forEach { o ->
+                        FilterChip(settings.chartOrientation == o, { onChange(settings.copy(chartOrientation = o)) }, label = { Text(o.label) })
+                    }
+                }
+                Text(
+                    "Along the long side: turn the phone sideways and the chart keeps running along the phone, using the most room.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Section("Wind symbol")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Glyph.entries.forEach { g ->
@@ -741,10 +765,19 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Section("Offline")
+                Text(
+                    "Winds for your saved places are downloaded whenever you're online (and refreshed when over an hour " +
+                        "old), and the last 20 spots you looked at are kept too, so they work in the plane with no " +
+                        "signal. Map tiles you've looked at are saved on the phone: before you go, open your drop zone " +
+                        "and zoom around it once while online." + if (offlineInfo.isNotEmpty()) "\n$offlineInfo" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     "Each altitude is a row, lowest at the pin; a longer symbol is a stronger wind. Directions are " +
-                        "shown in degrees (°) the wind comes from; temperatures end in C or F. Tap or long-press the " +
-                        "map to move the pin.",
+                        "shown in degrees (°) the wind comes from; temperatures end in C or F. Long-press the map to " +
+                        "move the forecast spot.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 12.dp),

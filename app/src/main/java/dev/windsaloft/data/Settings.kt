@@ -39,6 +39,14 @@ enum class Glyph(val label: String, val defaultAnchor: ArrowAnchor) {
     BARB("Wind barb", ArrowAnchor.TAIL),
 }
 
+/**
+ * Which way the wind chart runs on screen. LONGEST keeps it along the screen's long side: on a phone
+ * turned sideways the chart stays "up" as if the phone were still upright, using the most room.
+ */
+enum class ChartOrientation(val label: String) {
+    LONGEST("Along the long side"), VERTICAL("Always vertical"), HORIZONTAL("Always horizontal")
+}
+
 enum class TempUnit(val label: String) {
     C("Celsius (C)"), F("Fahrenheit (F)");
 
@@ -63,6 +71,7 @@ data class Settings(
     val showDirection: Boolean = false,
     val showSpeed: Boolean = true,
     val glyph: Glyph = Glyph.ARROW,
+    val chartOrientation: ChartOrientation = ChartOrientation.LONGEST,
 ) {
     val primaryModelId: String get() = modelIds.first()
     val comparing: Boolean get() = modelIds.size > 1
@@ -73,7 +82,8 @@ data class Settings(
     }
 }
 
-data class Camera(val center: LatLon, val zoom: Double)
+/** [orientation] (map rotation) is kept in memory only: it belongs to the way the phone was held then. */
+data class Camera(val center: LatLon, val zoom: Double, val orientation: Float = 0f)
 
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("winds_aloft", Context.MODE_PRIVATE)
@@ -98,6 +108,7 @@ class Prefs(context: Context) {
             showDirection = sp.getBoolean("showDirection", d.showDirection),
             showSpeed = sp.getBoolean("showSpeed", d.showSpeed),
             glyph = enumOr(sp.getString("glyph", null), d.glyph),
+            chartOrientation = enumOr(sp.getString("chartOrientation", null), d.chartOrientation),
         )
     }
 
@@ -116,6 +127,7 @@ class Prefs(context: Context) {
         .putBoolean("showDirection", s.showDirection)
         .putBoolean("showSpeed", s.showSpeed)
         .putString("glyph", s.glyph.name)
+        .putString("chartOrientation", s.chartOrientation.name)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {
@@ -143,17 +155,13 @@ class Prefs(context: Context) {
 
     fun saveAltRange(r: IntRange) = sp.edit().putInt("altLo", r.first).putInt("altHi", r.last).apply()
 
-    /** Last pin forecast per model, kept on disk so the app shows data while offline. */
-    fun savePinCache(modelId: String, json: String, key: String, fetchedAtMs: Long) {
-        java.io.File(files, "pin_$modelId.json").writeText(json)
-        sp.edit().putString("pinCacheKey_$modelId", key).putLong("pinCacheTime_$modelId", fetchedAtMs).apply()
-    }
+    fun loadFavorites(): List<SavedPlace> = SavedPlace.decodeList(sp.getString("favorites", null))
 
-    fun loadPinCache(modelId: String, key: String): Pair<String, Long>? {
-        if (sp.getString("pinCacheKey_$modelId", null) != key) return null
-        val f = java.io.File(files, "pin_$modelId.json")
-        return if (f.exists()) f.readText() to sp.getLong("pinCacheTime_$modelId", 0L) else null
-    }
+    fun saveFavorites(list: List<SavedPlace>) = sp.edit().putString("favorites", SavedPlace.encodeList(list)).apply()
+
+    fun loadRecents(): List<SavedPlace> = SavedPlace.decodeList(sp.getString("recents", null))
+
+    fun saveRecents(list: List<SavedPlace>) = sp.edit().putString("recents", SavedPlace.encodeList(list)).apply()
 
     private fun android.content.SharedPreferences.getDouble(key: String) =
         java.lang.Double.longBitsToDouble(getLong(key, 0L))

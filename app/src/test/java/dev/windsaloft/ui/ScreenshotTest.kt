@@ -120,6 +120,7 @@ class ScreenshotTest {
         val profiles = buildProfiles(state)
 
         lateinit var map: MapHandle
+        var panelsTop = 0
         compose.setContent {
             val ctx = LocalContext.current
             map = androidx.compose.runtime.remember { MapHandle(ctx, Camera(LatLon(40.0, -105.2), 10.0)) }
@@ -146,9 +147,8 @@ class ScreenshotTest {
                     }, modifier = Modifier.fillMaxSize())
                     CompassButton(rotation, {}, Modifier.align(Alignment.TopEnd).padding(top = 76.dp, end = 16.dp))
                     SearchBar(
-                        emptyList(), {}, {}, {}, {},
-                        Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth()
-                            .onGloballyPositioned { map.obscuredTopPx = it.boundsInRoot().bottom.toInt() },
+                        emptyList(), {}, {}, {}, {}, {},
+                        Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth(),
                     )
                     Column(
                         Modifier.align(Alignment.BottomCenter).padding(12.dp).fillMaxWidth(),
@@ -157,7 +157,7 @@ class ScreenshotTest {
                         PinPanel(
                             state, profiles, expanded = expanded, onToggle = {}, onClose = {},
                             modifier = Modifier.fillMaxWidth()
-                                .onGloballyPositioned { map.panelsTopPx = it.boundsInRoot().top.toInt() },
+                                .onGloballyPositioned { panelsTop = it.boundsInRoot().top.toInt() },
                         )
                         ControlsCard(state, settings.layer.attribution, {}, {}, Modifier.fillMaxWidth())
                     }
@@ -170,7 +170,7 @@ class ScreenshotTest {
         map.mapView.controller.setCenter(map.mapView.projection.fromPixels(
             map.mapView.width / 2,
             map.mapView.height / 2 + (map.mapView.projection.toPixels(org.osmdroid.util.GeoPoint(pin.lat, pin.lon), null).y -
-                (map.panelsTopPx - (28 * map.mapView.resources.displayMetrics.density).toInt())),
+                (panelsTop - (28 * map.mapView.resources.displayMetrics.density).toInt())),
         ))
         if (rotation != 0f) {
             // Rotate about the forecast spot, a little below the middle so the chart fits above it.
@@ -182,6 +182,76 @@ class ScreenshotTest {
         val root = map.mapView.rootView
         val bmp = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
         root.draw(Canvas(bmp))
+        File(outDir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    /** The real app screen, with the phone turned on its left side: panels down one side, chart along the phone. */
+    @Test
+    @Config(qualifiers = "w860dp-h400dp-land-xhdpi")
+    fun renderLandscapeApp() {
+        Configuration.getInstance().userAgentValue = "dev.windsaloft.test"
+        val display = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+            .getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(0)
+        org.robolectric.shadow.api.Shadow.extract<org.robolectric.shadows.ShadowDisplay>(display).setRotation(android.view.Surface.ROTATION_90)
+        val app = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = dev.windsaloft.MainViewModel(app)
+        val now = currentHourEpoch()
+        val pin = LatLon(40.10, -105.20)
+        val dz = dev.windsaloft.data.SavedPlace("Skydive Boulder", pin, 0)
+        vm.replaceStateForTest {
+            it.copy(
+                settings = Settings(), pin = pin, pinLabel = dz.name,
+                pinForecasts = mapOf(Settings().primaryModelId to syntheticPoint(pin, 1580.0, now, 0.0)),
+                pinFetchedAtMs = System.currentTimeMillis() - 2 * 3600_000L, nowHourEpoch = now, hourOffset = 3, altRangeK = 4..14,
+                favorites = listOf(dz), online = false,
+            )
+        }
+        compose.setContent { WindsAloftTheme { WindsAloftApp(vm) } }
+        repeat(8) { Thread.sleep(200); shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500)); compose.mainClock.advanceTimeBy(500) }
+        compose.waitForIdle()
+        repeat(6) { Thread.sleep(150); shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500)) }
+        save("landscape_app")
+    }
+
+    @Test
+    fun renderPlacesDialog() {
+        val now = System.currentTimeMillis()
+        val dz = dev.windsaloft.data.SavedPlace("Skydive Boulder", LatLon(40.10, -105.20), 0)
+        val state = UiState(
+            settings = Settings(), pin = dz.location,
+            favorites = listOf(dz, dev.windsaloft.data.SavedPlace("Mile-Hi Skydiving", LatLon(40.165, -105.163), 0),
+                dev.windsaloft.data.SavedPlace(null, LatLon(39.91, -105.12), 0)),
+            recents = listOf(dz),
+            savedWindTimes = mapOf(
+                dev.windsaloft.data.WindCache.spotKey(dz.location) to now - 40 * 60_000L,
+                dev.windsaloft.data.WindCache.spotKey(LatLon(40.165, -105.163)) to now - 5 * 3600_000L,
+            ),
+        )
+        compose.setContent {
+            WindsAloftTheme {
+                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.Card { Box(Modifier.padding(16.dp)) { PlacesContent(state, {}, {}, { _, _ -> }, {}, {}, {}) } }
+                }
+            }
+        }
+        compose.waitForIdle()
+        save("places_dialog")
+    }
+
+    /** Draws every window (the activity plus any dialog) into one PNG. */
+    private fun save(name: String) {
+        val global = Class.forName("android.view.WindowManagerGlobal").getMethod("getInstance").invoke(null)
+        @Suppress("UNCHECKED_CAST")
+        val roots = global.javaClass.getDeclaredField("mViews").apply { isAccessible = true }.get(global) as List<android.view.View>
+        val base = roots.first()
+        val bmp = Bitmap.createBitmap(base.width, base.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        for (v in roots) {
+            val loc = IntArray(2).also { v.getLocationOnScreen(it) }
+            canvas.save(); canvas.translate(loc[0].toFloat(), loc[1].toFloat())
+            if (v !== base) canvas.drawColor(0x66000000)
+            v.draw(canvas); canvas.restore()
+        }
         File(outDir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 

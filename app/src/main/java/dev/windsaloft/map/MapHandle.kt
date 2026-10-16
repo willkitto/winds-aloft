@@ -1,10 +1,15 @@
 package dev.windsaloft.map
 
 import android.content.Context
+import android.graphics.Rect
 import dev.windsaloft.data.Camera
+import dev.windsaloft.data.ChartOrientation
+import dev.windsaloft.data.Connectivity
 import dev.windsaloft.data.MapLayer
 import dev.windsaloft.wind.LatLon
 import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
 import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -41,15 +46,40 @@ val MapLayer.attribution: String
         MapLayer.SATELLITE -> "Imagery © Esri, Maxar, Earthstar Geographics"
     }
 
+/**
+ * Which way the wind chart points on screen, in degrees clockwise (0 = up). [displayRotationDeg] is
+ * how far the screen has turned from the device's natural orientation (Surface.ROTATION_* in degrees).
+ * Sideways charts point toward the device's top edge, so a phone turned on its side keeps the chart
+ * running along the phone exactly as it was when upright.
+ */
+fun chartTurnDegrees(mode: ChartOrientation, viewW: Int, viewH: Int, displayRotationDeg: Int): Int {
+    val deviceTop = (360 - displayRotationDeg % 360) % 360
+    val sideways = if (deviceTop == 90 || deviceTop == 270) deviceTop else 90
+    return when (mode) {
+        ChartOrientation.VERTICAL -> 0
+        ChartOrientation.HORIZONTAL -> sideways
+        ChartOrientation.LONGEST -> if (viewW > viewH) sideways else 0
+    }
+}
+
 /** Owns the osmdroid MapView and its overlays; lives as long as the composition. */
 class MapHandle(context: Context, initial: Camera?) {
-    val mapView = MapView(context)
+    // Tiles are only downloaded when the internet is really reachable; otherwise the map draws saved
+    // tiles (and scaled-up lower-zoom ones where it has nothing closer) without waiting on the network.
+    private val tiles = MapTileProviderBasic(
+        SimpleRegisterReceiver(context.applicationContext), Connectivity(context.applicationContext),
+        TileSourceFactory.OpenTopo, context.applicationContext, null,
+    )
+    val mapView = MapView(context, tiles)
     val windOverlay = WindOverlay(context.resources.displayMetrics.density)
     val myLocation = MyLocationNewOverlay(GpsMyLocationProvider(context), mapView)
 
-    /** Bottom edge of the search bar, and top edge of the bottom panels, in screen pixels. */
-    var obscuredTopPx = 0
-    var panelsTopPx = 0
+    /** Screen areas covered by panels (search bar, controls...), used to place the chart in the clear part. */
+    val obstacles = mutableMapOf<String, Rect>()
+
+    /** Which way the chart points on screen (degrees clockwise), see [chartTurnDegrees]. */
+    var chartTurn = 0
+        set(v) { field = v; windOverlay.chartTurn = v.toFloat() }
 
     /** Long-press: propose a new forecast spot (the user confirms before anything is fetched). */
     var onLongPress: (LatLon) -> Unit = {}
@@ -80,28 +110,53 @@ class MapHandle(context: Context, initial: Camera?) {
         val cam = initial ?: Camera(LatLon(39.5, -98.35), 4.0)
         mapView.controller.setZoom(cam.zoom)
         mapView.controller.setCenter(GeoPoint(cam.center.lat, cam.center.lon))
+        mapView.mapOrientation = cam.orientation
+    }
+
+    private var displayRotation: Int? = null
+
+    /**
+     * Turning the phone turns the screen (so panels and the keyboard come up the right way), but the
+     * map shouldn't move: rotate it back by the same amount, about the screen centre, so everything on
+     * the map stays exactly where it was under your finger. The compass then shows north is sideways,
+     * and tapping it turns the map north-up for the new way you're holding the phone.
+     */
+    fun onDisplayRotation(deg: Int) {
+        val old = displayRotation
+        displayRotation = deg
+        if (old == null || old == deg) return
+        mapView.mapOrientation = ((mapView.mapOrientation - (deg - old)) % 360 + 360) % 360
     }
 
     fun camera(): Camera {
         val c = mapView.mapCenter
-        return Camera(LatLon(c.latitude, c.longitude), mapView.zoomLevelDouble)
+        return Camera(LatLon(c.latitude, c.longitude), mapView.zoomLevelDouble, mapView.mapOrientation)
     }
 
     /**
-     * Pans the map so [p] sits at the bottom-centre of the free area between the search bar and the
-     * bottom panels, leaving room for its arrow columns above. Skips the pan if it's already close.
+     * Pans the map so [p] sits at the base of the clear area (the part not under panels), on the side
+     * opposite the chart's direction, leaving the chart room to run across the clear area. Skips the
+     * pan if it's already close.
      */
     fun keepAbovePanels(p: LatLon) {
         val w = mapView.width
         val h = mapView.height
-        if (w == 0 || panelsTopPx <= 0) return
-        val px = mapView.projection.toPixels(GeoPoint(p.lat, p.lon), null)
-        val margin = (28 * mapView.resources.displayMetrics.density).toInt()
-        val targetX = w / 2
-        val targetY = (panelsTopPx - margin).coerceAtLeast(obscuredTopPx + margin)
-        if (kotlin.math.abs(px.x - targetX) < w / 10 && kotlin.math.abs(px.y - targetY) < margin) return
-        val c = mapView.projection.fromPixels(w / 2 + (px.x - targetX), h / 2 + (px.y - targetY))
-        mapView.controller.animateTo(c)
+        if (w == 0 || h == 0) return
+        val free = clearArea(Rect(0, 0, w, h), obstacles.values)
+        val m = (28 * mapView.resources.displayMetrics.density).toInt()
+        val (tx, ty) = when (chartTurn) {
+            90 -> free.left + m to free.centerY()
+            180 -> free.centerX() to free.top + m
+            270 -> free.right - m to free.centerY()
+            else -> free.centerX() to free.bottom - m
+        }
+        val proj = mapView.projection
+        // toPixels/fromPixels work in the map's un-rotated frame; the target is in screen pixels.
+        val px = proj.toPixels(GeoPoint(p.lat, p.lon), null)
+        val onScreen = proj.rotateAndScalePoint(px.x, px.y, null)
+        if (kotlin.math.abs(onScreen.x - tx) < m && kotlin.math.abs(onScreen.y - ty) < m) return
+        val t = proj.unrotateAndScalePoint(tx, ty, null)
+        mapView.controller.animateTo(proj.fromPixels(w / 2 + (px.x - t.x), h / 2 + (px.y - t.y)))
     }
 
     /** Animates the map back to north-up. */
@@ -113,4 +168,21 @@ class MapHandle(context: Context, initial: Camera?) {
         val src = layer.tileSource
         if (mapView.tileProvider.tileSource.name() != src.name()) mapView.setTileSource(src)
     }
+}
+
+/**
+ * The largest part of [screen] left clear by [covered] panels: each panel is cut off along whichever
+ * of its edges leaves the most room.
+ */
+fun clearArea(screen: Rect, covered: Collection<Rect>): Rect {
+    var free = Rect(screen)
+    for (o in covered) {
+        if (o.isEmpty || !Rect.intersects(free, o)) continue
+        val options = listOf(
+            Rect(free.left, free.top, free.right, o.top), Rect(free.left, o.bottom, free.right, free.bottom),
+            Rect(free.left, free.top, o.left, free.bottom), Rect(o.right, free.top, free.right, free.bottom),
+        ).filter { it.width() > 0 && it.height() > 0 }
+        free = options.maxByOrNull { it.width().toLong() * it.height() } ?: free
+    }
+    return free
 }

@@ -18,6 +18,10 @@ Upper-wind forecasts drawn on a map. The pinned location gets a column of arrows
 | **Chart dragged off the pin, temperature colours** | **Map rotated 40°** |
 | ![detached](docs/screenshot-detached.png) | ![rotated](docs/screenshot-rotated.png) |
 
+Phone turned on its side (default *Along the long side*): the chart keeps running along the phone and the panels move to one side.
+
+![landscape](docs/screenshot-landscape.png)
+
 *These were rendered with synthetic wind data in a test. The grey background is tiles that hadn't loaded yet.*
 
 ## Features
@@ -33,7 +37,16 @@ Upper-wind forecasts drawn on a map. The pinned location gets a column of arrows
 - **Map rotation**: rotate the map with two fingers. The chart stays upright, and each symbol turns so it matches its real direction on the rotated map. The compass button in the top-right corner shows which way north is; tap it to turn the map north-up again.
 - **My location** button.
 - **Map styles**: Topo (OpenTopoMap), Streets (OSM), Satellite (Esri World Imagery).
-- **Offline-friendly**: map tiles you've viewed are cached (up to 1 GB), and the last pinned forecast is saved to disk.
+- **Turning the phone**: the map stays exactly where it is on the glass. The screen turns so panels, text and the keyboard are the right way up, and the map is turned back by the same amount; the compass then shows north is sideways, and tapping it makes the map north-up for the new way you're holding the phone. In landscape the panels move to a column down one side. Settings → *Chart direction* picks how the chart runs:
+  - *Along the long side* (default): turned sideways, the chart keeps running along the phone toward its top edge, as if the phone were still upright, which uses the most room.
+  - *Always vertical* or *Always horizontal*, whichever way the phone is held.
+- **Saved places**: tap ☆ on a spot's panel to save it (favourites), and use the places button in the search bar to jump back to one. Saved places can be renamed. There is also a separate history of the last 20 spots you looked at.
+- **Offline (e.g. in the plane)**:
+  - The winds for every saved place and recent spot are kept on the phone, so they still show with no signal. The panel says *Offline* and how old they are.
+  - Saved places are re-downloaded whenever you're online and their winds are over an hour old. *Download winds for all saved places* does it on demand.
+  - "Online" means the internet is actually reachable. A plane's Wi-Fi before you've paid counts as offline, so nothing hangs waiting for it.
+  - Map tiles you've viewed are kept (up to 1 GB). Offline, the map draws only saved tiles, and scales up lower-zoom tiles where it has nothing closer. Before a trip, open your drop zone and zoom around it once while online.
+  - Whole areas aren't bulk-downloaded in advance. The OpenStreetMap and OpenTopoMap tile servers are run by volunteers, and their usage policies ask apps not to prefetch tiles.
 - **Forecast models** (via Open-Meteo): Best match, NOAA GFS + HRRR, NOAA HRRR (US only, ~2 days), ECMWF IFS 0.25°, DWD ICON, Canada GEM, UK Met Office. Only models with upper-air data are offered; ECMWF's 9 km IFS has none. Models with sparser pressure levels, such as ECMWF, are interpolated across wider gaps.
 - **Speed units**: kt, mph, km/h, m/s.
 

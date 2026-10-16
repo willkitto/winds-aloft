@@ -25,6 +25,11 @@ class MainActivity : ComponentActivity() {
             tileFileSystemCacheMaxBytes = 1024L * 1024 * 1024
             tileFileSystemCacheTrimBytes = 800L * 1024 * 1024
         }
+        // Turning the phone re-lays out the panels in place (no rebuild), and the map is turned back to
+        // stay put; a plain cut avoids the system's spin animation swinging the map around first.
+        window.attributes = window.attributes.apply {
+            rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_JUMPCUT
+        }
         // The map sits under the status bar and is usually light, so keep dark status-bar icons.
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT))
         setContent {

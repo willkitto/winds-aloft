@@ -58,6 +58,11 @@ class WindOverlay(private val density: Float) : Overlay() {
     var onRotation: (Float) -> Unit = {}
     /** The map's current rotation; symbol directions are offset by it so they match the rotated map. */
     private var rotation = 0f
+    /**
+     * Which way the chart runs on screen, degrees clockwise (0 = rising straight up). The whole chart
+     * turns, text included; the symbols in it still point along their real directions on the map.
+     */
+    var chartTurn: Float = 0f
     var glyph: Glyph = Glyph.ARROW
     var showSpeed: Boolean = true
     /** The altitude of each row (low to high), in the display reference. */
@@ -137,10 +142,10 @@ class WindOverlay(private val density: Float) : Overlay() {
             c.drawLine(x, y, pinX, pinY, leader)
         }
         drawPin(c, pinX, pinY)
-        // Keep the chart upright on screen: undo the map's rotation around the chart's anchor. The
-        // symbols inside add the rotation back, so each still points along its real compass direction.
+        // Keep the chart upright on screen (or turned by chartTurn): undo the map's rotation around the
+        // chart's anchor. The symbols inside add it back, so each still points along its real direction.
         c.save()
-        c.rotate(-rotation, x, y)
+        c.rotate(-rotation + chartTurn, x, y)
         if (columns.isNotEmpty()) {
             when (layout) {
                 ArrowLayout.STACKED -> drawColumns(c, x, y)
@@ -150,8 +155,8 @@ class WindOverlay(private val density: Float) : Overlay() {
         val handleOffset = drawHandle(c, x, y, detached)
         c.restore()
         // Touch events arrive in the same (rotated) canvas frame: place the handle's hit spot there.
-        val o = Math.toRadians(rotation.toDouble())
-        handleX = x + handleOffset * sin(o).toFloat()
+        val o = Math.toRadians((chartTurn - rotation).toDouble())
+        handleX = x - handleOffset * sin(o).toFloat()
         handleY = y + handleOffset * cos(o).toFloat()
         pinPx = pinX to pinY
     }
@@ -412,7 +417,7 @@ class WindOverlay(private val density: Float) : Overlay() {
             return
         }
         val len = if (scaleBySpeed) fullLen * stackedFraction(kt) else fullLen
-        val a = Math.toRadians(w.dirFromDeg + rotation + if (glyph == Glyph.TRIANGLE) 0.0 else 180.0)
+        val a = Math.toRadians(w.dirFromDeg + rotation - chartTurn + if (glyph == Glyph.TRIANGLE) 0.0 else 180.0)
         val dx = sin(a).toFloat()
         val dy = -cos(a).toFloat()
         val back = when (anchor) { ArrowAnchor.TAIL -> 0f; ArrowAnchor.NOSE -> len; ArrowAnchor.CENTRE -> len / 2 }
@@ -443,7 +448,7 @@ class WindOverlay(private val density: Float) : Overlay() {
             c.drawCircle(cx, cy, calmRadius, line)
             return
         }
-        val a = Math.toRadians(w.dirFromDeg + rotation) // toward where the wind comes from
+        val a = Math.toRadians(w.dirFromDeg + rotation - chartTurn) // toward where the wind comes from
         val dx = sin(a).toFloat()
         val dy = -cos(a).toFloat()
         // Tail = the plain (station) end, nose = the feathered end, which faces into the wind.

@@ -8,6 +8,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -40,7 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -52,19 +60,31 @@ import dev.windsaloft.MainViewModel
 import dev.windsaloft.data.MapLayer
 import dev.windsaloft.map.MapHandle
 import dev.windsaloft.map.attribution
+import dev.windsaloft.map.chartTurnDegrees
 import dev.windsaloft.wind.LatLon
 import org.osmdroid.util.GeoPoint
 
 /** What the panels show: everything, only the forecast-time slider, or nothing. */
 enum class PanelMode { FULL, TIME_ONLY, HIDDEN }
 
+/** Records where a panel covers the map, so a newly placed chart lands in the clear part. */
+@Composable
+private fun Modifier.coversMap(map: MapHandle, key: String): Modifier {
+    DisposableEffect(key) { onDispose { map.obstacles.remove(key) } }
+    return onGloballyPositioned {
+        val r = it.boundsInRoot()
+        map.obstacles[key] = android.graphics.Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
+    }
+}
+
 @Composable
 fun WindsAloftApp(vm: MainViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val map = remember { MapHandle(context, vm.initialCamera) }
+    val map = remember { MapHandle(context, vm.lastCamera) }
     val snackbar = remember { SnackbarHostState() }
     var showSettings by remember { mutableStateOf(false) }
+    var showPlaces by remember { mutableStateOf(false) }
     // Collapsed by default so the arrow columns get most of the screen; tap the panel for the table.
     var profileExpanded by rememberSaveable { mutableStateOf(false) }
     // The hide button steps through: all panels -> forecast time only -> nothing. The arrows never resize.
@@ -76,8 +96,23 @@ fun WindsAloftApp(vm: MainViewModel) {
     map.onLongPress = vm::proposePin
     map.windOverlay.onChartMoved = vm::setChartAt
     // Two-finger rotation turns the map; the compass shows north and resets it.
-    var mapRotation by remember { mutableFloatStateOf(0f) }
+    var mapRotation by remember { mutableFloatStateOf(map.mapView.mapOrientation) }
     map.windOverlay.onRotation = { mapRotation = it }
+
+    // ---- Phone orientation ----
+    // The screen turns with the phone (panels, text and keyboard stay readable), but the map is turned
+    // back so it doesn't move, and the chart keeps the direction picked in Settings.
+    val config = LocalConfiguration.current
+    val view = LocalView.current
+    val landscape = config.screenWidthDp > config.screenHeightDp
+    @Suppress("DEPRECATION")
+    val displayRotation = remember(config) { (view.display?.rotation ?: 0) * 90 }
+    SideEffect {
+        map.onDisplayRotation(displayRotation)
+        mapRotation = map.mapView.mapOrientation
+    }
+    val s = state.settings
+    val chartTurn = chartTurnDegrees(s.chartOrientation, config.screenWidthDp, config.screenHeightDp, displayRotation)
 
     // ---- Location ----
     fun hasLocationPermission() =
@@ -105,12 +140,17 @@ fun WindsAloftApp(vm: MainViewModel) {
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
         if (granted.values.any { it }) goToMyLocation() else vm.message("Location permission denied")
     }
+    fun myLocationClicked() {
+        if (hasLocationPermission()) goToMyLocation()
+        else permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    }
 
-    // First launch with nothing pinned: offer to centre on the user's location.
+    // Very first launch, nothing pinned: offer to centre on the user's location. Only ever once, so a
+    // rebuilt screen never jumps the map to where you are.
     LaunchedEffect(Unit) {
-        if (state.pin == null && vm.initialCamera == null) {
-            if (hasLocationPermission()) goToMyLocation()
-            else permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        if (!vm.offeredMyLocation) {
+            vm.offeredMyLocation = true
+            if (state.pin == null && vm.lastCamera == null) myLocationClicked()
         }
     }
 
@@ -135,6 +175,7 @@ fun WindsAloftApp(vm: MainViewModel) {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            vm.saveCamera(map.camera())
             map.mapView.onDetach()
         }
     }
@@ -145,7 +186,7 @@ fun WindsAloftApp(vm: MainViewModel) {
     }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
-    // When a pin is placed, move it to the bottom-centre of the free map area so its columns fit above it.
+    // When a pin is placed, move it to the base of the clear map area so its chart fits beside the panels.
     // Opening the table later doesn't move or resize anything: it covers the map, which can be panned.
     LaunchedEffect(state.pin) {
         val pin = state.pin ?: return@LaunchedEffect
@@ -154,9 +195,97 @@ fun WindsAloftApp(vm: MainViewModel) {
     }
 
     // ---- Derived wind data for the selected time + altitudes ----
-    val s = state.settings
     val profiles = remember(state.pinForecasts, state.selectedEpoch, state.altRangeK, s) { buildProfiles(state) }
     val columns = remember(profiles, s.comparing) { buildColumns(state, profiles) }
+
+    // ---- Panel pieces, arranged below for portrait or landscape ----
+    val searchBar = @Composable { modifier: Modifier ->
+        SearchBar(
+            results = state.searchResults,
+            onSearch = vm::search,
+            onPick = vm::selectPlace,
+            onClearResults = vm::clearSearchResults,
+            onSettings = { showSettings = true },
+            onPlaces = { showPlaces = true },
+            modifier = modifier.coversMap(map, "search"),
+        )
+    }
+    val compass = @Composable { modifier: Modifier ->
+        CompassButton(rotation = mapRotation, onClick = map::resetNorth, modifier = modifier)
+    }
+    val fabs = @Composable {
+        SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.TIME_ONLY) }) {
+            Icon(AppIcons.Fullscreen, contentDescription = "Hide panels (keep the time slider)")
+        }
+        SmallFloatingActionButton(onClick = {
+            val next = MapLayer.entries[(s.layer.ordinal + 1) % MapLayer.entries.size]
+            vm.updateSettings(s.copy(layer = next))
+            vm.message("Map: ${next.label}")
+        }) { Icon(AppIcons.Layers, contentDescription = "Change map style") }
+        SmallFloatingActionButton(onClick = vm::refresh) {
+            Icon(Icons.Default.Refresh, contentDescription = "Refresh forecast")
+        }
+        SmallFloatingActionButton(onClick = ::myLocationClicked) { Icon(AppIcons.MyLocation, contentDescription = "My location") }
+    }
+    val pending = @Composable {
+        state.pendingPin?.let { p ->
+            ConfirmSpotCard(location = p, onConfirm = vm::confirmPendingPin, onCancel = vm::cancelPendingPin, modifier = Modifier.fillMaxWidth())
+        }
+    }
+    val pinAndControls = @Composable {
+        if (state.pin != null) {
+            PinPanel(
+                state = state,
+                profiles = profiles,
+                expanded = profileExpanded,
+                onToggle = { profileExpanded = !profileExpanded },
+                onClose = vm::clearPin,
+                onReattach = if (state.chartAt != null) ({ vm.setChartAt(null) }) else null,
+                onToggleFavorite = { vm.toggleFavorite() },
+                modifier = Modifier.fillMaxWidth().coversMap(map, "pin"),
+            )
+        } else {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.9f),
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            ) {
+                Text(
+                    "Long-press the map to pick a forecast spot",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
+        }
+        ControlsCard(
+            state = state,
+            attribution = s.layer.attribution,
+            onHourOffset = vm::setHourOffset,
+            onAltRange = vm::setAltRange,
+            modifier = Modifier.fillMaxWidth().coversMap(map, "controls"),
+        )
+    }
+    val timeOnly = @Composable { modifier: Modifier ->
+        Row(modifier, verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TimeOnlyCard(state, vm::setHourOffset, Modifier.weight(1f).coversMap(map, "time"))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.FULL) }) {
+                    Icon(AppIcons.FullscreenExit, contentDescription = "Show all panels")
+                }
+                SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.HIDDEN) }) {
+                    Icon(AppIcons.Fullscreen, contentDescription = "Hide the time slider too")
+                }
+            }
+        }
+    }
+    val showPanelsButton = @Composable { modifier: Modifier ->
+        ExtendedFloatingActionButton(
+            onClick = { setPanelMode(PanelMode.FULL) },
+            icon = { Icon(AppIcons.FullscreenExit, contentDescription = null) },
+            text = { Text("Show panels") },
+            modifier = modifier,
+        )
+    }
 
     Box(Modifier.fillMaxSize()) {
         AndroidView(
@@ -164,6 +293,7 @@ fun WindsAloftApp(vm: MainViewModel) {
             modifier = Modifier.fillMaxSize(),
             update = {
                 map.setLayer(s.layer)
+                map.chartTurn = chartTurn
                 map.windOverlay.location = state.pin
                 map.windOverlay.chartLocation = state.chartAt
                 map.windOverlay.pendingLocation = state.pendingPin
@@ -184,144 +314,114 @@ fun WindsAloftApp(vm: MainViewModel) {
             },
         )
 
-        // Top: search
-        if (panelMode == PanelMode.FULL) SearchBar(
-            results = state.searchResults,
-            onSearch = vm::search,
-            onPick = vm::selectPlace,
-            onClearResults = vm::clearSearchResults,
-            onSettings = { showSettings = true },
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .widthIn(max = 560.dp)
-                .fillMaxWidth()
-                .onGloballyPositioned { map.obscuredTopPx = it.boundsInRoot().bottom.toInt() },
-        )
-
-        // Bottom: buttons, pinned profile, controls
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .widthIn(max = 560.dp)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            state.pendingPin?.let { p ->
-                ConfirmSpotCard(
-                    location = p,
-                    onConfirm = vm::confirmPendingPin,
-                    onCancel = vm::cancelPendingPin,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            if (panelMode == PanelMode.HIDDEN) {
-                ExtendedFloatingActionButton(
-                    onClick = { setPanelMode(PanelMode.FULL) },
-                    icon = { Icon(AppIcons.FullscreenExit, contentDescription = null) },
-                    text = { Text("Show panels") },
-                    modifier = Modifier.align(Alignment.End),
-                )
-                return@Column
-            }
-            if (panelMode == PanelMode.TIME_ONLY) {
-                // Just the forecast-time slider, so the map stays free while stepping through hours.
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TimeOnlyCard(state, vm::setHourOffset, Modifier.weight(1f))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.FULL) }) {
-                            Icon(AppIcons.FullscreenExit, contentDescription = "Show all panels")
-                        }
-                        SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.HIDDEN) }) {
-                            Icon(AppIcons.Fullscreen, contentDescription = "Hide the time slider too")
+        if (landscape) {
+            // Sideways: panels in a column down one side, leaving the long side of the map for the chart.
+            // The panel sits on the side the chart starts from, so the chart runs out across the open map.
+            val panelAtStart = chartTurn == 90
+            val panelWidth = 380.dp
+            Row(
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val side = @Composable {
+                    Column(Modifier.width(panelWidth).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (panelMode == PanelMode.FULL) searchBar(Modifier.fillMaxWidth())
+                        Spacer(Modifier.weight(1f))
+                        when (panelMode) {
+                            PanelMode.FULL -> Column(
+                                Modifier.verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) { pending(); pinAndControls() }
+                            PanelMode.TIME_ONLY -> { pending(); timeOnly(Modifier.fillMaxWidth()) }
+                            PanelMode.HIDDEN -> { pending(); showPanelsButton(Modifier) }
                         }
                     }
                 }
-                return@Column
+                val buttons = @Composable {
+                    Column(Modifier.fillMaxHeight().coversMap(map, "buttons"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        compass(Modifier)
+                        Spacer(Modifier.weight(1f))
+                        if (panelMode == PanelMode.FULL) fabs()
+                    }
+                }
+                if (panelAtStart) { side(); buttons(); Spacer(Modifier.weight(1f)) }
+                else { Spacer(Modifier.weight(1f)); buttons(); side() }
             }
+        } else {
+            if (panelMode == PanelMode.FULL) searchBar(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .widthIn(max = 560.dp)
+                    .fillMaxWidth(),
+            )
+
+            // Bottom: buttons, pinned profile, controls
             Column(
-                Modifier.align(Alignment.End),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalAlignment = Alignment.End,
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .widthIn(max = 560.dp)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                SmallFloatingActionButton(onClick = { setPanelMode(PanelMode.TIME_ONLY) }) {
-                    Icon(AppIcons.Fullscreen, contentDescription = "Hide panels (keep the time slider)")
-                }
-                SmallFloatingActionButton(onClick = {
-                    val next = MapLayer.entries[(s.layer.ordinal + 1) % MapLayer.entries.size]
-                    vm.updateSettings(s.copy(layer = next))
-                    vm.message("Map: ${next.label}")
-                }) { Icon(AppIcons.Layers, contentDescription = "Change map style") }
-                SmallFloatingActionButton(onClick = vm::refresh) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh forecast")
-                }
-                SmallFloatingActionButton(onClick = {
-                    if (hasLocationPermission()) goToMyLocation()
-                    else permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                }) { Icon(AppIcons.MyLocation, contentDescription = "My location") }
-            }
-            if (state.pin != null) {
-                PinPanel(
-                    state = state,
-                    profiles = profiles,
-                    expanded = profileExpanded,
-                    onToggle = { profileExpanded = !profileExpanded },
-                    onClose = vm::clearPin,
-                    onReattach = if (state.chartAt != null) ({ vm.setChartAt(null) }) else null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned {
-                            val top = it.boundsInRoot().top.toInt()
-                            if (top != map.panelsTopPx) { map.panelsTopPx = top; map.mapView.invalidate() }
-                        },
-                )
-            } else {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.9f),
-                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                ) {
-                    Text(
-                        "Long-press the map to pick a forecast spot",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                    )
+                pending()
+                when (panelMode) {
+                    PanelMode.HIDDEN -> showPanelsButton(Modifier.align(Alignment.End))
+                    // Just the forecast-time slider, so the map stays free while stepping through hours.
+                    PanelMode.TIME_ONLY -> timeOnly(Modifier)
+                    PanelMode.FULL -> {
+                        Column(
+                            Modifier.align(Alignment.End),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.End,
+                        ) { fabs() }
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) { pinAndControls() }
+                    }
                 }
             }
-            ControlsCard(
-                state = state,
-                attribution = s.layer.attribution,
-                onHourOffset = vm::setHourOffset,
-                onAltRange = vm::setAltRange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { if (state.pin == null) map.panelsTopPx = it.boundsInRoot().top.toInt() },
+
+            compass(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(end = 16.dp, top = if (panelMode == PanelMode.FULL) 72.dp else 12.dp),
             )
         }
-
-        CompassButton(
-            rotation = mapRotation,
-            onClick = map::resetNorth,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(end = 16.dp, top = if (panelMode == PanelMode.FULL) 72.dp else 12.dp),
-        )
 
         SnackbarHost(
             snackbar,
             Modifier
                 .align(Alignment.TopCenter)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = 64.dp),
+                .padding(top = 64.dp)
+                .widthIn(max = 560.dp),
         )
     }
 
     if (showSettings) {
-        SettingsDialog(settings = s, onChange = vm::updateSettings, onDismiss = { showSettings = false })
+        val offlineInfo = remember {
+            val tiles = java.io.File(context.filesDir, "osmdroid/tiles/cache.db").length()
+            val winds = java.io.File(context.filesDir, "winds").listFiles()?.sumOf { it.length() } ?: 0L
+            "Saved on this phone: map tiles %.0f MB (up to 1 GB), winds %.1f MB.".format(tiles / 1e6, winds / 1e6)
+        }
+        SettingsDialog(settings = s, onChange = vm::updateSettings, onDismiss = { showSettings = false }, offlineInfo = offlineInfo)
+    }
+    if (showPlaces) {
+        PlacesDialog(
+            state = state,
+            onGo = { vm.goToPlace(it); showPlaces = false },
+            onToggleFavorite = vm::toggleFavorite,
+            onRename = vm::renameFavorite,
+            onRemoveRecent = vm::removeRecent,
+            onClearRecents = vm::clearRecents,
+            onSaveAllOffline = { vm.updateSavedPlaces(force = true) },
+            onDismiss = { showPlaces = false },
+        )
     }
 }
