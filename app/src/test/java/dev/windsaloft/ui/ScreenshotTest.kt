@@ -82,6 +82,13 @@ class ScreenshotTest {
     fun renderTemperatureColour() = render("temperature_light", Settings(arrowColor = dev.windsaloft.data.ArrowColor.TEMPERATURE), expanded = false)
 
     @Test
+    fun renderTriangles() = render("triangle_light", Settings(glyph = dev.windsaloft.data.Glyph.TRIANGLE,
+        arrowAnchor = dev.windsaloft.data.ArrowAnchor.NOSE, showDirection = true), expanded = false)
+
+    @Test
+    fun renderBarbs() = render("barb_light", Settings(glyph = dev.windsaloft.data.Glyph.BARB), expanded = false)
+
+    @Test
     @Config(qualifiers = "+night")
     fun renderCompareDarkExpanded() = render("compare_dark_table", compareSettings, expanded = true)
 
@@ -117,6 +124,10 @@ class ScreenshotTest {
                         map.windOverlay.colorMode = settings.arrowColor
                         map.windOverlay.showClouds = settings.showClouds
                         map.windOverlay.altitudesFt = state.altitudesFt
+                        map.windOverlay.glyph = settings.glyph
+                        map.windOverlay.anchor = settings.arrowAnchor
+                        map.windOverlay.showDirection = settings.showDirection
+                        map.windOverlay.showSpeed = settings.showSpeed
                         map.mapView
                     }, modifier = Modifier.fillMaxSize())
                     SearchBar(

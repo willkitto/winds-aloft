@@ -86,4 +86,10 @@ class OpenMeteoTest {
         assertNull(Geocoding.parseCoordinates("Boulder"))
         assertNull(Geocoding.parseCoordinates("95, 10"))
     }
+
+    @Test
+    fun temperatureUsesUnitLetterNotDegreeSign() {
+        assertEquals("-3C", TempUnit.C.format(-3.2))
+        assertEquals("27F", TempUnit.F.format(-2.8))
+    }
 }

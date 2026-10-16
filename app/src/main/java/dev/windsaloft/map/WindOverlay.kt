@@ -7,6 +7,7 @@ import android.graphics.Point
 import dev.windsaloft.data.ArrowAnchor
 import dev.windsaloft.data.ArrowColor
 import dev.windsaloft.data.ArrowLayout
+import dev.windsaloft.data.Glyph
 import dev.windsaloft.wind.CloudCover
 import dev.windsaloft.wind.CloudLayer
 import dev.windsaloft.wind.KT_PER_MS
@@ -45,12 +46,16 @@ class WindOverlay(private val density: Float) : Overlay() {
     var showTemperature: Boolean = true
     var showClouds: Boolean = true
     var anchor: ArrowAnchor = ArrowAnchor.TAIL
+    var glyph: Glyph = Glyph.ARROW
+    var showSpeed: Boolean = true
     /** The altitude of each row (low to high), in the display reference. */
     var altitudesFt: List<Int> = emptyList()
     /** Speed text in the user's unit. */
     var speedLabel: (Double) -> String = { ms -> (ms * KT_PER_MS).toInt().toString() }
     /** Temperature text in the user's unit. */
-    var tempLabel: (Double) -> String = { c -> "${c.toInt()}°" }
+    var tempLabel: (Double) -> String = { c -> "${c.toInt()}C" }
+    /** Show the direction the wind comes from ("270°") in front of each speed. */
+    var showDirection: Boolean = false
 
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -79,6 +84,9 @@ class WindOverlay(private val density: Float) : Overlay() {
     private val rect = android.graphics.RectF()
     private val markerText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF1C2733.toInt(); textAlign = Paint.Align.CENTER; isFakeBoldText = true
+    }
+    private val barbStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val path = Path()
     private val pt = Point()
@@ -126,7 +134,11 @@ class WindOverlay(private val density: Float) : Overlay() {
         // column reserves the farthest a windsock arrow could reach in any direction, then a label slot.
         val lenScale = if (comparing) COMPARE_LENGTH else STACK_LENGTH
         val reach = (if (anchor == ArrowAnchor.CENTRE) cell * lenScale / 2 else cell * lenScale) + stroke * 1.5f + density
-        val labelW = maxOf(width("888", textSize), if (showTemperature) width("-88°", tempSize) else 0f) + 6 * density
+        // Sized for the widest possible text, so the slot never changes with the numbers.
+        val topTemplate = listOfNotNull(if (showDirection) "888°" else null, if (showSpeed) "888" else null).joinToString(" ")
+        val topW = if (topTemplate.isEmpty()) 0f else width(topTemplate, textSize)
+        val tempW = if (showTemperature) width("-88F", tempSize) else 0f
+        val labelW = if (topW == 0f && tempW == 0f) 0f else maxOf(topW, tempW) + 6 * density
         val gap = 4 * density
         val colW = 2 * reach + labelW + gap
         val altW = width("14k", textSize) + 12 * density
@@ -184,26 +196,23 @@ class WindOverlay(private val density: Float) : Overlay() {
                 val cy = rowY(i)
                 val color = colorFor(w, col)
                 val kt = w.speedMs * KT_PER_MS
-                if (kt < 1.0) {
-                    line.color = color; line.strokeWidth = stroke * 0.8f
-                    c.drawCircle(cx, cy, cell * 0.16f, line)
-                } else {
-                    // Windsock by default: the tail sits on the centre line and the arrow streams downwind.
-                    val len = cell * lenScale * stackedFraction(kt)
-                    val a = Math.toRadians(w.dirFromDeg + 180.0)
-                    val back = when (anchor) { ArrowAnchor.TAIL -> 0f; ArrowAnchor.NOSE -> len; ArrowAnchor.CENTRE -> len / 2 }
-                    drawArrow(c, cx - sin(a).toFloat() * back, cy + cos(a).toFloat() * back, a, len, stroke, color)
-                }
+                drawGlyph(c, cx, cy, w, cell * lenScale, cell * 0.16f, stroke, color, anchor)
                 if (i % labelEvery != 0) return@forEachIndexed
-                // Label slot: speed on top, temperature underneath, always at the same spot.
+                // Label slot: direction + speed on top, temperature underneath, always at the same spot.
                 val lx = cx + reach + 4 * density
                 val hasTemp = showTemperature && w.tempC != null
-                text.textSize = textSize; textHalo.textSize = textSize
-                drawText(c, speedLabel(w.speedMs), lx, if (hasTemp) cy - density else cy + textSize * 0.36f, Paint.Align.LEFT, 0xFFFFFFFF.toInt())
+                val topLine = listOfNotNull(
+                    if (showDirection) "%03d°".format(Math.round(w.dirFromDeg).toInt() % 360) else null,
+                    if (showSpeed) speedLabel(w.speedMs) else null,
+                ).joinToString(" ")
+                if (topLine.isNotEmpty()) {
+                    text.textSize = textSize; textHalo.textSize = textSize
+                    drawText(c, topLine, lx, if (hasTemp) cy - density else cy + textSize * 0.36f, Paint.Align.LEFT, 0xFFFFFFFF.toInt())
+                }
                 if (hasTemp) {
                     text.textSize = tempSize; textHalo.textSize = tempSize
                     val tint = if (colorMode == ArrowColor.TEMPERATURE) 0xFFFFFFFF.toInt() else temperatureTint(w.tempC!!)
-                    drawText(c, tempLabel(w.tempC), lx, cy + tempSize + density, Paint.Align.LEFT, tint)
+                    drawText(c, tempLabel(w.tempC), lx, if (topLine.isEmpty()) cy + tempSize * 0.36f else cy + tempSize + density, Paint.Align.LEFT, tint)
                 }
             }
             if (col.label != null) {
@@ -273,6 +282,96 @@ class WindOverlay(private val density: Float) : Overlay() {
         ArrowColor.ALTITUDE -> AltitudeColors.argb(w.altitudeFt, ceilingFt)
         ArrowColor.SPEED -> AltitudeColors.speed(w.speedMs * KT_PER_MS)
         ArrowColor.TEMPERATURE -> w.tempC?.let { AltitudeColors.temperature(it) } ?: 0xFFFFFFFF.toInt()
+        ArrowColor.MODEL -> col.color ?: ModelColors.argb(0)
+        ArrowColor.WHITE -> 0xFFFFFFFF.toInt()
+    }
+
+    /**
+     * Draws one wind glyph. Each runs from its tail to its nose (arrowhead, triangle apex, or a barb's
+     * feathered end); [anchor] picks which end sits at ([cx], [cy]). Arrows point downwind (a windsock),
+     * triangles point into the wind (a landing tetrahedron), barbs follow the weather-chart convention.
+     */
+    private fun drawGlyph(
+        c: Canvas, cx: Float, cy: Float, w: Wind, fullLen: Float, calmRadius: Float, stroke: Float, color: Int,
+        anchor: ArrowAnchor, scaleBySpeed: Boolean = true,
+    ) {
+        val kt = w.speedMs * KT_PER_MS
+        if (glyph == Glyph.BARB) return drawBarb(c, cx, cy, w, fullLen, calmRadius, stroke, color, anchor)
+        if (kt < 1.0) {
+            line.color = color; line.strokeWidth = stroke * 0.8f
+            c.drawCircle(cx, cy, calmRadius, line)
+            return
+        }
+        val len = if (scaleBySpeed) fullLen * stackedFraction(kt) else fullLen
+        val a = Math.toRadians(w.dirFromDeg + if (glyph == Glyph.TRIANGLE) 0.0 else 180.0)
+        val dx = sin(a).toFloat()
+        val dy = -cos(a).toFloat()
+        val back = when (anchor) { ArrowAnchor.TAIL -> 0f; ArrowAnchor.NOSE -> len; ArrowAnchor.CENTRE -> len / 2 }
+        val sx = cx - dx * back
+        val sy = cy - dy * back
+        if (glyph == Glyph.ARROW) return drawArrow(c, sx, sy, a, len, stroke, color)
+        // Triangle: apex at the nose, base at the tail.
+        val ex = sx + dx * len
+        val ey = sy + dy * len
+        val hw = len * 0.22f
+        path.reset()
+        path.moveTo(ex, ey)
+        path.lineTo(sx - dy * hw, sy + dx * hw)
+        path.lineTo(sx + dy * hw, sy - dx * hw)
+        path.close()
+        headHalo.strokeWidth = 2.2f * density
+        c.drawPath(path, headHalo)
+        headFill.color = color
+        c.drawPath(path, headFill)
+    }
+
+    /** Wind barb: the staff points into the wind; 50 kt pennants, 10 kt barbs, 5 kt half-barbs. */
+    private fun drawBarb(c: Canvas, cx: Float, cy: Float, w: Wind, len: Float, calmRadius: Float, stroke: Float, color: Int, anchor: ArrowAnchor) {
+        val kt = Math.round(w.speedMs * KT_PER_MS / 5) * 5
+        if (kt < 5) {
+            line.color = color; line.strokeWidth = stroke * 0.8f
+            c.drawCircle(cx, cy, calmRadius, line)
+            return
+        }
+        val a = Math.toRadians(w.dirFromDeg) // toward where the wind comes from
+        val dx = sin(a).toFloat()
+        val dy = -cos(a).toFloat()
+        // Tail = the plain (station) end, nose = the feathered end, which faces into the wind.
+        val back = when (anchor) { ArrowAnchor.TAIL -> 0f; ArrowAnchor.NOSE -> len; ArrowAnchor.CENTRE -> len / 2 }
+        val sx = cx - dx * back
+        val sy = cy - dy * back
+        val ex = sx + dx * len
+        val ey = sy + dy * len
+        val px = -dy
+        val py = dx // feathers on the clockwise side
+        val fl = len * 0.42f
+        val step = len * 0.15f
+        var rest = kt.toInt()
+        var pos = 0f
+        val pennants = mutableListOf<Float>()
+        path.reset()
+        path.moveTo(sx, sy); path.lineTo(ex, ey)
+        while (rest >= 50) { pennants += pos; pos += step * 1.3f; rest -= 50 }
+        fun feather(at: Float, l: Float) {
+            val bx = ex - dx * at
+            val by = ey - dy * at
+            path.moveTo(bx, by); path.lineTo(bx + px * l + dx * l * 0.35f, by + py * l + dy * l * 0.35f)
+        }
+        while (rest >= 10) { feather(pos, fl); pos += step; rest -= 10 }
+        if (rest >= 5) feather(if (pos == 0f) step else pos, fl * 0.55f)
+        val sw = maxOf(1.6f * density, stroke * 0.7f)
+        barbStroke.strokeWidth = sw + 2.4f * density; barbStroke.color = 0xAA000000.toInt()
+        c.drawPath(path, barbStroke)
+        barbStroke.strokeWidth = sw; barbStroke.color = color
+        c.drawPath(path, barbStroke)
+        headFill.color = color
+        for (p in pennants) {
+            val bx = ex - dx * p
+            val by = ey - dy * p
+            path.reset()
+            path.moveTo(bx, by); path.lineTo(bx + px * fl, by + py * fl); path.lineTo(bx - dx * step * 1.1f, by - dy * step * 1.1f); path.close()
+            c.drawPath(path, headFill)
+        }
     }
 
     /** Label tint: pale blue below freezing, pale orange above, white around 0 °C. */
@@ -290,12 +389,9 @@ class WindOverlay(private val density: Float) : Overlay() {
         for (col in columns.asReversed()) for (w in col.winds.filterNotNull().sortedByDescending { it.altitudeFt }) {
             val color = colorFor(w, col)
             val kt = w.speedMs * KT_PER_MS
-            if (kt < 1.0) {
-                line.color = color; line.strokeWidth = stroke * 0.8f
-                c.drawCircle(x, y, 8f * density, line)
-                continue
-            }
-            drawArrow(c, x, y, Math.toRadians(w.dirFromDeg + 180.0), arrowLengthDp(kt) * density, stroke, color)
+            // In the fan every glyph starts at the pin; arrows and triangles are sized by speed.
+            val len = if (glyph == Glyph.BARB) 44 * density else arrowLengthDp(kt) * density
+            drawGlyph(c, x, y, w, len, 8f * density, stroke, color, ArrowAnchor.TAIL, scaleBySpeed = false)
         }
     }
 

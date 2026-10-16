@@ -133,7 +133,7 @@ textarea.export { width: 100%; height: 120px; font: 12px var(--font-mono); backg
     <span>Units &amp; reference</span>
     <div class="row">
       <select id="unit"><option value="kt">kt</option><option value="mph">mph</option><option value="kmh">km/h</option><option value="ms">m/s</option></select>
-      <select id="tempUnit" aria-label="Temperature unit"><option value="C">°C</option><option value="F">°F</option></select>
+      <select id="tempUnit" aria-label="Temperature unit"><option value="C">Temp C</option><option value="F">Temp F</option></select>
       <select id="ref"><option value="MSL">MSL</option><option value="AGL">AGL</option></select>
       <select id="ceiling"><option value="14000">14k ceiling</option><option value="18000" selected>18k ceiling</option><option value="24000">24k ceiling</option><option value="30000">30k ceiling</option></select>
     </div>
@@ -187,7 +187,7 @@ const DEFAULT_DESIGN = {
   layout: "stacked", glyph: "arrow", pointing: "downwind", anchor: "tail", clouds: "labels",
   rowHeight: 38, lenScale: 1.25, compareLenScale: 0.85, minFrac: 0.5, fullKt: 40,
   strokeScale: 1, headScale: 1, halo: 1, staff: true, colGap: 4,
-  colorMode: "auto", speedLabels: true, tempLabels: true, altLabels: true, labelScale: 1, gnd: true,
+  colorMode: "auto", speedLabels: true, dirLabels: false, tempLabels: true, altLabels: true, labelScale: 1, gnd: true,
   fanPxPerKt: 2.2, mapFade: 0, mapDarken: 0,
 };
 const KNOBS = [
@@ -209,6 +209,7 @@ const KNOBS = [
   { group: "Colour & labels", key: "colorMode", label: "Colour by", type: "select", wide: true,
     options: [["auto","Auto (altitude; model when comparing)"],["altitude","Altitude"],["speed","Speed"],["temperature","Temperature"],["model","Model"],["white","White"]] },
   { group: "Colour & labels", key: "speedLabels", label: "Speed numbers", type: "toggle" },
+  { group: "Colour & labels", key: "dirLabels", label: "Direction (from)", type: "toggle" },
   { group: "Colour & labels", key: "tempLabels", label: "Temperatures", type: "toggle" },
   { group: "Colour & labels", key: "altLabels", label: "Altitude labels", type: "toggle" },
   { group: "Colour & labels", key: "gnd", label: "Ground line", type: "toggle" },
@@ -218,20 +219,20 @@ const KNOBS = [
   { group: "Map", key: "mapDarken", label: "Darken map", type: "range", min: 0, max: 0.8, step: 0.05, fmt: v => Math.round(v * 100) + "%" },
 ];
 /**
- * Natural defaults when a glyph is picked: every glyph is attached at its upwind end and trails downwind.
- * Arrow = windsock (points downwind, tail on the line). Triangle = landing tetrahedron (points into the
- * wind, nose on the line). Barb = feathers (the end facing into the wind) on the line.
+ * Defaults when a glyph is picked. Arrow = windsock (points downwind, tail on the line). Triangle =
+ * landing tetrahedron (points into the wind, nose on the line). Barb = weather-chart convention: the
+ * plain (station) end on the line, the staff and feathers pointing into the wind.
  */
 const GLYPH_DEFAULTS = {
   arrow: { pointing: "downwind", anchor: "tail" },
   triangle: { pointing: "upwind", anchor: "nose" },
-  barb: { anchor: "nose" },
+  barb: { anchor: "tail" },
 };
 const EXAMPLES = [
   { name: "Windsock arrows", design: {} },
   { name: "Tetrahedron triangles", design: { glyph: "triangle", ...GLYPH_DEFAULTS.triangle } },
-  { name: "Wind barbs (feathers on line)", design: { glyph: "barb", ...GLYPH_DEFAULTS.barb, minFrac: 1, lenScale: 1.1 } },
-  { name: "Wind barbs (chart style)", design: { glyph: "barb", anchor: "tail", minFrac: 1, lenScale: 1.1 } },
+  { name: "Wind barbs (chart style)", design: { glyph: "barb", ...GLYPH_DEFAULTS.barb, minFrac: 1, lenScale: 1.1 } },
+  { name: "Arrows + direction", design: { dirLabels: true } },
 ];
 
 // ======================================================================== wind maths (port of WindMath.kt)
@@ -519,7 +520,8 @@ function drawColumns(ctx, x, y, cols, d) {
   // each column reserves the farthest an arrow could reach in any direction, then a label slot.
   const maxLen = cell * lenScale;
   const R = (anchoredAtEnd ? maxLen : maxLen / 2) + stroke * 1.5 + 1;
-  const sw = d.speedLabels ? measure("888", textSize) : 0, tw = d.tempLabels ? measure("-88°", tempSize) : 0;
+  // Slot sized for the widest possible text, so it never changes with the numbers.
+  const sw = d.speedLabels ? measure(d.dirLabels ? "888° 888" : "888", textSize) : 0, tw = d.tempLabels ? measure("-88F", tempSize) : 0;
   const labelW = sw || tw ? Math.max(sw, tw) + 6 : 0;
   const colW = 2 * R + labelW + d.colGap;
   const altW = d.altLabels ? measure("14k", textSize) + 12 : 0;
@@ -560,7 +562,7 @@ function drawColumns(ctx, x, y, cols, d) {
       if (i % every) return;
       // Label slot: speed on top, temperature underneath, always at the same spot.
       const lx = cx + R + 4, hasT = d.tempLabels && w.t != null;
-      if (d.speedLabels) { setText(ctx, textSize, "left"); haloText(ctx, fmtSpeed(w.sp), lx, hasT ? cy - 1 : cy + textSize * 0.36, "#ffffff"); }
+      if (d.speedLabels) { setText(ctx, textSize, "left"); haloText(ctx, (d.dirLabels ? fmtDir(w.d) + " " : "") + fmtSpeed(w.sp), lx, hasT ? cy - 1 : cy + textSize * 0.36, "#ffffff"); }
       if (hasT) {
         setText(ctx, tempSize, "left");
         haloText(ctx, fmtTemp(w.t), lx, d.speedLabels ? cy + tempSize + 1 : cy + tempSize * 0.36, d.colorMode === "temperature" ? "#ffffff" : tempLabelColor(w.t));
@@ -768,7 +770,9 @@ function renderAll() { for (const p of panes) drawPane(p); }
 const el = id => document.getElementById(id);
 const shortName = id => MODELS.find(m => m.id === id)?.short || id;
 const fmtSpeed = ms => String(Math.round(ms * UNITS[S.unit].f));
-const fmtTemp = c => c == null ? "" : (S.tempUnit === "F" ? Math.round(c * 9 / 5 + 32) : Math.round(c)) + "°";
+/** "-3C" / "27F": the unit letter, not "°", which is kept for compass directions. */
+const fmtTemp = c => c == null ? "" : (S.tempUnit === "F" ? Math.round(c * 9 / 5 + 32) : Math.round(c)) + S.tempUnit;
+const fmtDir = deg => String(Math.round(deg) % 360).padStart(3, "0") + "°";
 const coordText = p => p ? `${Math.abs(p.lat).toFixed(3)}°${p.lat >= 0 ? "N" : "S"} ${Math.abs(p.lon).toFixed(3)}°${p.lon >= 0 ? "E" : "W"}` : "";
 function fmtTime(epoch) {
   const dt = new Date(epoch * 1000);
@@ -849,7 +853,7 @@ function exportPane(p) {
   const changed = Object.fromEntries(Object.entries(p.design).filter(([k, v]) => DEFAULT_DESIGN[k] !== v));
   return { name: p.name, changedFromApp: changed, design: p.design };
 }
-function savePanes() { store("panes-v5", panes.map(p => ({ name: p.name, design: p.design }))); }
+function savePanes() { store("panes-v6", panes.map(p => ({ name: p.name, design: p.design }))); }
 function copyText(text, msg) {
   navigator.clipboard?.writeText(text).then(() => toast(msg), () => showExport(text)) ?? showExport(text);
 }
@@ -960,7 +964,7 @@ async function search() {
   const g = load("global") || {};
   Object.assign(S, { models: g.models || S.models, hour: g.hour ?? S.hour, altLo: g.altLo ?? S.altLo, altHi: g.altHi ?? S.altHi, unit: g.unit || S.unit, tempUnit: g.tempUnit || S.tempUnit, panX: g.panX || 0, panY: g.panY || 0,
     ref: g.ref || S.ref, ceiling: g.ceiling || S.ceiling, layer: g.layer || S.layer, chrome: g.chrome || S.chrome });
-  const saved = load("panes-v5");
+  const saved = load("panes-v6");
   (saved?.length ? saved : EXAMPLES).forEach(x => addPane(x.name, x.design));
 
   S.live = await detectLive();

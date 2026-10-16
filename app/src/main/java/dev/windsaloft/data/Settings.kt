@@ -24,12 +24,26 @@ enum class ArrowLayout(val label: String) { STACKED("Stacked"), FAN("Fan") }
 enum class ArrowAnchor(val label: String) { TAIL("Tail (windsock)"), NOSE("Nose"), CENTRE("Centre") }
 
 /** What arrow colour shows. AUTO: altitude, or the model when comparing. */
-enum class ArrowColor(val label: String) { AUTO("Auto"), ALTITUDE("Altitude"), SPEED("Speed"), TEMPERATURE("Temperature") }
+enum class ArrowColor(val label: String) {
+    AUTO("Auto"), ALTITUDE("Altitude"), SPEED("Speed"), TEMPERATURE("Temperature"), MODEL("Model"), WHITE("White")
+}
+
+/**
+ * The wind symbol, with the end that sits on the column line by default: an arrow is a windsock
+ * (points downwind, tail on the line), a triangle is a landing tetrahedron (points into the wind, nose
+ * on the line), a wind barb follows the weather-chart convention (station end on the line).
+ */
+enum class Glyph(val label: String, val defaultAnchor: ArrowAnchor) {
+    ARROW("Arrow (windsock)", ArrowAnchor.TAIL),
+    TRIANGLE("Triangle (tetrahedron)", ArrowAnchor.NOSE),
+    BARB("Wind barb", ArrowAnchor.TAIL),
+}
 
 enum class TempUnit(val label: String) {
-    C("°C"), F("°F");
+    C("Celsius (C)"), F("Fahrenheit (F)");
 
-    fun format(c: Double): String = "${(if (this == F) c * 9 / 5 + 32 else c).let { Math.round(it) }}°"
+    /** "-3C" / "27F": the unit letter, not "°", which is kept for compass directions. */
+    fun format(c: Double): String = "${(if (this == F) c * 9 / 5 + 32 else c).let { Math.round(it) }}$name"
 }
 
 data class Settings(
@@ -45,6 +59,10 @@ data class Settings(
     val showTemperature: Boolean = true,
     val showClouds: Boolean = true,
     val arrowAnchor: ArrowAnchor = ArrowAnchor.TAIL,
+    /** Show the direction the wind comes from (e.g. "270°") beside each speed on the map. */
+    val showDirection: Boolean = false,
+    val showSpeed: Boolean = true,
+    val glyph: Glyph = Glyph.ARROW,
 ) {
     val primaryModelId: String get() = modelIds.first()
     val comparing: Boolean get() = modelIds.size > 1
@@ -77,6 +95,9 @@ class Prefs(context: Context) {
             showTemperature = sp.getBoolean("showTemp", d.showTemperature),
             showClouds = sp.getBoolean("showClouds", d.showClouds),
             arrowAnchor = enumOr(sp.getString("arrowAnchor", null), d.arrowAnchor),
+            showDirection = sp.getBoolean("showDirection", d.showDirection),
+            showSpeed = sp.getBoolean("showSpeed", d.showSpeed),
+            glyph = enumOr(sp.getString("glyph", null), d.glyph),
         )
     }
 
@@ -92,6 +113,9 @@ class Prefs(context: Context) {
         .putBoolean("showTemp", s.showTemperature)
         .putBoolean("showClouds", s.showClouds)
         .putString("arrowAnchor", s.arrowAnchor.name)
+        .putBoolean("showDirection", s.showDirection)
+        .putBoolean("showSpeed", s.showSpeed)
+        .putString("glyph", s.glyph.name)
         .apply()
 
     fun loadPin(): Pair<LatLon, String?>? {

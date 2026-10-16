@@ -1,6 +1,7 @@
 package dev.windsaloft.ui
 
 import androidx.compose.foundation.Canvas
+import dev.windsaloft.data.Glyph
 import dev.windsaloft.data.ArrowAnchor
 import dev.windsaloft.wind.CloudLayer
 import dev.windsaloft.data.TempUnit
@@ -590,32 +591,55 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                         FilterChip(settings.layer == l, { onChange(settings.copy(layer = l)) }, label = { Text(l.label) })
                     }
                 }
-                Section("Arrow colour")
+                Section("Wind symbol")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Glyph.entries.forEach { g ->
+                        // Picking a symbol also applies its natural anchor (windsock, tetrahedron, chart barb).
+                        FilterChip(settings.glyph == g, { onChange(settings.copy(glyph = g, arrowAnchor = g.defaultAnchor)) },
+                            label = { Text(g.label) })
+                    }
+                }
+                Section("On the column line")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ArrowAnchor.entries.forEach { a ->
+                        FilterChip(settings.arrowAnchor == a, { onChange(settings.copy(arrowAnchor = a)) }, label = { Text(a.label) })
+                    }
+                }
+                Text(
+                    when (settings.glyph) {
+                        Glyph.ARROW -> "Arrows point downwind. Tail on the line works like a windsock."
+                        Glyph.TRIANGLE -> "Triangles point into the wind. Nose on the line works like a landing tetrahedron."
+                        Glyph.BARB -> "Barbs point into the wind, feathers at the far end. Tail (station) on the line is the weather-chart convention."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Section("Colour")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ArrowColor.entries.forEach { c ->
                         FilterChip(settings.arrowColor == c, { onChange(settings.copy(arrowColor = c)) }, label = { Text(c.label) })
                     }
                 }
-                Section("Temperature")
+                Section("Numbers on the map")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(settings.showSpeed, { onChange(settings.copy(showSpeed = !settings.showSpeed)) }, label = { Text("Speed") })
+                    FilterChip(settings.showDirection, { onChange(settings.copy(showDirection = !settings.showDirection)) },
+                        label = { Text("Direction (from)") })
+                    FilterChip(settings.showTemperature, { onChange(settings.copy(showTemperature = !settings.showTemperature)) },
+                        label = { Text("Temperature") })
+                }
+                Section("Temperature unit")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TempUnit.entries.forEach { u ->
                         FilterChip(settings.tempUnit == u, { onChange(settings.copy(tempUnit = u)) }, label = { Text(u.label) })
                     }
-                    FilterChip(settings.showTemperature, { onChange(settings.copy(showTemperature = !settings.showTemperature)) },
-                        label = { Text("Show on map") })
                 }
                 Section("Cloud layers")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(settings.showClouds, { onChange(settings.copy(showClouds = !settings.showClouds)) },
                         label = { Text("Show cloud bases & tops") })
                 }
-                Section("Arrow on the column line")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ArrowAnchor.entries.forEach { a ->
-                        FilterChip(settings.arrowAnchor == a, { onChange(settings.copy(arrowAnchor = a)) }, label = { Text(a.label) })
-                    }
-                }
-                Section("Arrow layout")
+                Section("Layout")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ArrowLayout.entries.forEach { l ->
                         FilterChip(settings.arrowLayout == l, { onChange(settings.copy(arrowLayout = l)) }, label = { Text(l.label) })
@@ -656,9 +680,9 @@ fun SettingsDialog(settings: Settings, onChange: (Settings) -> Unit, onDismiss: 
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Arrows point downwind (the way the air is moving). Stacked: each altitude is a row, lowest at " +
-                        "the pin; a bigger arrow is a stronger wind and the speed is printed beside it. Colour shows " +
-                        "altitude, or the model when comparing. Tap or long-press the map to move the pin.",
+                    "Each altitude is a row, lowest at the pin; a longer symbol is a stronger wind. Directions are " +
+                        "shown in degrees (°) the wind comes from; temperatures end in C or F. Tap or long-press the " +
+                        "map to move the pin.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 12.dp),

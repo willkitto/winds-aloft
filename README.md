@@ -2,8 +2,11 @@
 
 Upper-wind forecasts drawn on a map. The pinned location gets a column of arrows rising from it, one row per 1,000 ft altitude step, lowest at the bottom. When you compare forecast models, each model gets its own column.
 
-- **Direction**: arrows act like windsocks. Each tail sits on the column's centre line and the arrow streams **downwind** (the way the air is moving). Settings can put the nose or the centre on the line instead.
-- **Speed**: a longer arrow means stronger wind, and the speed is printed beside each arrow, followed by the **temperature**.
+- **Direction**: arrows act like windsocks. Each tail sits on the column's centre line and the arrow streams **downwind** (the way the air is moving). Settings → *Wind symbol* can switch to:
+  - **Triangles**, like a landing tetrahedron: they point into the wind, nose on the line.
+  - **Wind barbs**, in the weather-chart convention: the station end is on the line, and the staff and feathers point into the wind.
+  - *On the column line* (tail, nose or centre) overrides the symbol's default.
+- **Numbers**: beside each symbol, speed on top and temperature underneath, e.g. "-3C" or "27F". The ° sign is kept for compass directions. *Numbers on the map* can also add the direction the wind comes from ("270° 19"), and each number can be turned on or off.
 - **Altitude**: row position, labelled down the left side. The layout is fixed: rows have a set spacing, and each column reserves room for the longest possible arrow plus a speed/temperature slot. So nothing moves or resizes when you change the time or when panels open. Pan the map to see what's underneath, or hide all panels with one tap.
 - **Colour**: altitude by default, or the model when comparing. Settings can switch it to speed or temperature.
 - **Ground**: in MSL mode, altitudes below the terrain are left out, so the column starts at the pin, which is marked **GND**.
