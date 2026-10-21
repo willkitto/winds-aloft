@@ -398,11 +398,14 @@ fun PinPanel(
     profiles: List<ModelProfile>,
     expanded: Boolean,
     onToggle: () -> Unit,
+    /** Hides this panel; the forecast spot and its chart stay on the map. */
     onClose: () -> Unit,
     /** Shown when the chart has been dragged away from the forecast spot. */
     onReattach: (() -> Unit)? = null,
     onToggleFavorite: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /** Removes the forecast spot altogether (offered at the bottom of the open table). */
+    onRemove: (() -> Unit)? = null,
 ) {
     val s = state.settings
     val pin = state.pin ?: return
@@ -473,7 +476,7 @@ fun PinPanel(
                     tint = if (favorite) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Remove pin") }
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Hide this panel") }
         }
         if (onReattach != null) {
             TextButton(onClick = onReattach, modifier = Modifier.padding(start = 6.dp)) { Text("Put the chart back on the forecast spot") }
@@ -487,6 +490,7 @@ fun PinPanel(
                 style = MaterialTheme.typography.bodyMedium,
             )
             MetarSection(state)
+            RemoveSpot(onRemove)
             return@Card
         }
         if (profiles.size > 1) {
@@ -507,6 +511,47 @@ fun PinPanel(
             }
         }
         MetarSection(state)
+        RemoveSpot(onRemove)
+    }
+}
+
+/** The one place to delete the forecast spot (hiding the panel with ✕ keeps it). */
+@Composable
+private fun RemoveSpot(onRemove: (() -> Unit)?) {
+    if (onRemove == null) return
+    HorizontalDivider()
+    TextButton(onClick = onRemove, modifier = Modifier.padding(start = 6.dp)) {
+        Text("Remove this forecast spot", color = MaterialTheme.colorScheme.error)
+    }
+}
+
+/**
+ * What's left of the location panel after ✕: the place and its ground wind at the selected time, on a
+ * small pill. Tap it to open the panel again.
+ */
+@Composable
+fun PinPill(state: UiState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    val pin = state.pin ?: return
+    val s = state.settings
+    val ground = state.visibleModelIds.firstNotNullOfOrNull { state.pinForecasts[it] }
+        ?.windsAt(state.selectedEpoch, listOf(0), AltitudeRef.AGL)?.firstOrNull()
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 4.dp,
+        modifier = modifier.semantics { contentDescription = "Show the location panel" },
+    ) {
+        Row(Modifier.padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                (state.pinLabel ?: Format.coords(pin)) + (ground?.let { " · ground ${speedText(it, s)} ${s.unit.label}" } ?: ""),
+                style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (state.pinLoading) CircularProgressIndicator(Modifier.padding(start = 8.dp).size(14.dp), strokeWidth = 2.dp)
+            Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, modifier = Modifier.padding(start = 4.dp))
+        }
     }
 }
 

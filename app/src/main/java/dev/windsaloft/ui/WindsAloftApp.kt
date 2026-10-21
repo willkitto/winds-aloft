@@ -93,6 +93,10 @@ fun WindsAloftApp(vm: MainViewModel) {
     var layerMenu by remember { mutableStateOf(false) }
     // Collapsed by default so the arrow columns get most of the screen; tap the panel for the table.
     var profileExpanded by rememberSaveable { mutableStateOf(false) }
+    // The location panel's ✕ hides it (down to a small pill); a newly picked spot shows it again.
+    var pinPanelHidden by rememberSaveable { mutableStateOf(false) }
+    var lastPin by remember { mutableStateOf(state.pin) }
+    if (state.pin != lastPin) { lastPin = state.pin; pinPanelHidden = false }
     // The hide button steps through: all panels -> forecast time only -> nothing. The arrows never resize.
     var panelModeName by rememberSaveable { mutableStateOf(PanelMode.FULL.name) }
     val panelMode = PanelMode.valueOf(panelModeName)
@@ -253,16 +257,20 @@ fun WindsAloftApp(vm: MainViewModel) {
         }
     }
     val pinAndControls = @Composable {
-        if (state.pin != null) {
+        if (state.pin != null && pinPanelHidden) {
+            // ✕ only hides the panel: the spot, its chart and its forecast stay. Tap the pill to bring it back.
+            PinPill(state, onOpen = { pinPanelHidden = false }, modifier = Modifier.coversMap(map, "pin"))
+        } else if (state.pin != null) {
             PinPanel(
                 state = state,
                 profiles = profiles,
                 expanded = profileExpanded,
                 onToggle = { profileExpanded = !profileExpanded },
-                onClose = vm::clearPin,
+                onClose = { pinPanelHidden = true; profileExpanded = false },
                 onReattach = if (state.chartAt != null) ({ vm.setChartAt(null) }) else null,
                 onToggleFavorite = { vm.toggleFavorite() },
                 modifier = Modifier.fillMaxWidth().coversMap(map, "pin"),
+                onRemove = vm::clearPin,
             )
         } else {
             Surface(

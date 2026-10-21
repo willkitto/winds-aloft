@@ -16,6 +16,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.performTouchInput
@@ -184,6 +185,35 @@ class ScreenshotTest {
         compose.setContent { WindsAloftTheme { TwoDayScreen(state, {}) } }
         compose.waitForIdle()
         save("twoday_dark")
+    }
+
+    /** The panel's ✕ only hides it: the spot and its forecast stay, and the pill brings the panel back. */
+    @Test
+    fun closingThePanelKeepsTheSpot() {
+        Configuration.getInstance().userAgentValue = "dev.windsaloft.test"
+        val app = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = dev.windsaloft.MainViewModel(app)
+        val now = currentHourEpoch()
+        val pin = LatLon(40.10, -105.20)
+        vm.replaceStateForTest {
+            it.copy(
+                pin = pin, pinLabel = "Skydive Boulder", nowHourEpoch = now, hourOffset = 3, altRangeK = 4..14,
+                pinForecasts = mapOf(it.settings.primaryModelId to syntheticPoint(pin, 1580.0, now, 0.0)),
+            )
+        }
+        vm.saveCamera(Camera(LatLon(40.0, -105.2), 10.0))
+        compose.setContent { WindsAloftTheme { WindsAloftApp(vm) } }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Hide this panel").performClick()
+        compose.waitForIdle()
+        assertTrue("the spot stays", vm.state.value.pin == pin)
+        assertTrue("its forecast stays", vm.state.value.pinForecasts.isNotEmpty())
+        compose.onNodeWithContentDescription("Show the location panel").assertExists()
+        repeat(4) { Thread.sleep(150); shadowOf(Looper.getMainLooper()).idle() }
+        save("panel_hidden")
+        compose.onNodeWithContentDescription("Show the location panel").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Hide this panel").assertExists()
     }
 
     /** Every change on the settings page redraws the preview. */

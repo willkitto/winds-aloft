@@ -24,8 +24,8 @@ android {
         applicationId = "dev.windsaloft"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.11.2"
+        versionCode = 15
+        versionName = "0.11.3"
 
         resValue("string", "app_name", if (variantLabel == null) "Winds Aloft" else "Winds Aloft ($variantLabel)")
         if (variantIdSuffix != null) {
